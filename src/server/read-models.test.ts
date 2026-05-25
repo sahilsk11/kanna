@@ -175,6 +175,65 @@ describe("read models", () => {
     ])
   })
 
+  test("skips task-grouped chats whose workspace was removed", () => {
+    const state = createEmptyState()
+    state.projectsById.set("workspace-active", {
+      id: "workspace-active",
+      localPath: "/tmp/active",
+      title: "Active",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    state.projectsById.set("workspace-removed", {
+      id: "workspace-removed",
+      localPath: "/tmp/removed",
+      title: "Removed",
+      createdAt: 1,
+      updatedAt: 5,
+      deletedAt: 5,
+    })
+    state.tasksById.set("task-1", {
+      id: "task-1",
+      title: "Launch",
+      localPath: "/tmp/active",
+      createdAt: 1,
+      updatedAt: 10,
+    })
+    state.chatsById.set("chat-visible", {
+      id: "chat-visible",
+      projectId: "workspace-active",
+      taskId: "task-1",
+      title: "Visible",
+      createdAt: 2,
+      updatedAt: 2,
+      unread: false,
+      provider: null,
+      planMode: false,
+      sessionToken: null,
+      lastTurnOutcome: null,
+    })
+    state.chatsById.set("chat-orphaned", {
+      id: "chat-orphaned",
+      projectId: "workspace-removed",
+      taskId: "task-1",
+      title: "Orphaned",
+      createdAt: 3,
+      updatedAt: 3,
+      unread: false,
+      provider: null,
+      planMode: false,
+      sessionToken: null,
+      lastTurnOutcome: null,
+    })
+
+    const sidebar = deriveSidebarData(state, new Map(), {
+      nowMs: 1_000_000,
+      sessionGrouping: "tasks",
+    })
+
+    expect(sidebar.projectGroups.flatMap((group) => group.chats.map((chat) => chat.chatId))).toEqual(["chat-visible"])
+  })
+
   test("includes available providers in chat snapshots", () => {
     const state = createEmptyState()
     state.projectsById.set("project-1", {

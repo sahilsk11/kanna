@@ -125,9 +125,11 @@ export function deriveSidebarData(
     const unassignedArchivedChats: ChatRecord[] = []
     const activeTasks = [...state.tasksById.values()].filter((task) => !task.deletedAt)
     const activeTaskIds = new Set(activeTasks.map((task) => task.id))
+    const activeProjectIds = new Set(allProjects.map((project) => project.id))
 
     for (const chat of state.chatsById.values()) {
       if (chat.deletedAt) continue
+      if (!activeProjectIds.has(chat.projectId)) continue
       const taskId = chat.taskId && activeTaskIds.has(chat.taskId) ? chat.taskId : null
       if (!taskId) {
         ;(chat.archivedAt ? unassignedArchivedChats : unassignedChats).push(chat)
