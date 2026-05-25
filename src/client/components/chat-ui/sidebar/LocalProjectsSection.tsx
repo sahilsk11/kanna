@@ -36,7 +36,7 @@ interface Props {
   onToggleExpandedGroup: (key: string) => void
   renderChatRow: (chat: SidebarChatRow) => ReactNode
   onShowArchivedProject?: (projectId: string) => void
-  onNewLocalChat?: (localPath: string) => void
+  onNewLocalChat?: (group: SidebarProjectGroup) => void
   onCopyPath?: (localPath: string) => void
   onOpenExternalPath?: (action: "open_finder" | "open_editor", localPath: string) => void
   onRenameProject?: (projectId: string, sidebarTitle: string | undefined, realTitle: string) => void
@@ -56,7 +56,7 @@ interface SortableProjectGroupProps {
   onToggleExpandedGroup: (key: string) => void
   renderChatRow: (chat: SidebarChatRow) => ReactNode
   onShowArchivedProject?: (projectId: string) => void
-  onNewLocalChat?: (localPath: string) => void
+  onNewLocalChat?: (group: SidebarProjectGroup) => void
   onCopyPath?: (localPath: string) => void
   onOpenExternalPath?: (action: "open_finder" | "open_editor", localPath: string) => void
   onRenameProject?: (projectId: string, sidebarTitle: string | undefined, realTitle: string) => void
@@ -116,16 +116,17 @@ function getRectCenterY(rect: Pick<ClientRect, "top" | "height">) {
 }
 
 function EmptyProjectChatButton({
-  localPath,
+  group,
   onNewLocalChat,
   isConnected,
   startingLocalPath,
 }: {
-  localPath: string
-  onNewLocalChat: (localPath: string) => void
+  group: SidebarProjectGroup
+  onNewLocalChat: (group: SidebarProjectGroup) => void
   isConnected?: boolean
   startingLocalPath?: string | null
 }) {
+  const localPath = group.localPath
   const disabled = !isConnected || startingLocalPath === localPath
 
   return (
@@ -138,7 +139,7 @@ function EmptyProjectChatButton({
         "border-border/0 dark:hover:border-slate-400/10",
         disabled && "cursor-not-allowed opacity-50 active:scale-100"
       )}
-      onClick={() => onNewLocalChat(localPath)}
+      onClick={() => onNewLocalChat(group)}
     >
       <span className="text-sm truncate flex-1 translate-y-[-0.5px] text-slate-500 dark:text-slate-400">
         New Chat
@@ -216,7 +217,9 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
   const isExpanded = expandedGroups.has(groupKey)
   const isEmptyProject = group.chats.length === 0
   const hasMore = group.olderChats.length > 0
-  const hasProjectMenu = Boolean(onHideProject && onCopyPath && onOpenExternalPath)
+  const groupKind = group.kind ?? "workspace"
+  const canCreateChat = Boolean(onNewLocalChat && localPath && groupKind !== "unassigned")
+  const hasProjectMenu = groupKind === "workspace" && Boolean(onHideProject && onCopyPath && onOpenExternalPath)
 
   const {
     attributes,
@@ -268,7 +271,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
           </TooltipContent>
         </Tooltip>
       </div>
-      {(hasProjectMenu || onNewLocalChat) && (
+      {(hasProjectMenu || canCreateChat) && (
         <div className="absolute right-2 flex items-center gap-[1px] opacity-100 md:opacity-0 md:group-hover/section:opacity-100">
           {hasProjectMenu ? (
             <Tooltip>
@@ -287,7 +290,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
               </TooltipContent>
             </Tooltip>
           ) : null}
-          {onNewLocalChat ? (
+          {canCreateChat && onNewLocalChat ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -300,7 +303,7 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
                   disabled={!isConnected || startingLocalPath === localPath}
                   onClick={(event) => {
                     event.stopPropagation()
-                    onNewLocalChat(localPath)
+                    onNewLocalChat(group)
                   }}
                 >
                   {startingLocalPath === localPath ? (
@@ -344,11 +347,11 @@ const SortableProjectGroup = memo(function SortableProjectGroup({
         </ProjectSectionMenu>
       ) : header}
 
-      {!collapsedSections.has(groupKey) && (isEmptyProject ? Boolean(onNewLocalChat) : group.previewChats.length > 0 || hasMore) && (
+      {!collapsedSections.has(groupKey) && (isEmptyProject ? canCreateChat : group.previewChats.length > 0 || hasMore) && (
         <div className="space-y-[2px] mb-3">
-          {isEmptyProject && onNewLocalChat ? (
+          {isEmptyProject && canCreateChat && onNewLocalChat ? (
             <EmptyProjectChatButton
-              localPath={localPath}
+              group={group}
               onNewLocalChat={onNewLocalChat}
               isConnected={isConnected}
               startingLocalPath={startingLocalPath}
@@ -400,6 +403,7 @@ const LocalProjectsSectionImpl = function LocalProjectsSection({
   startingLocalPath,
 }: Props) {
   const isReorderEnabled = useSidebarReorderEnabled()
+    && projectGroups.every((group) => (group.kind ?? "workspace") === "workspace")
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 2 } }),
     useSensor(KeyboardSensor)

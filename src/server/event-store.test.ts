@@ -367,6 +367,27 @@ describe("EventStore", () => {
     expect(reloaded.getSidebarProjectOrder()).toEqual([second.id, first.id])
   })
 
+  test("persists tasks and chat task assignments across restart", async () => {
+    const dataDir = await createTempDataDir()
+    const store = new EventStore(dataDir)
+    await store.initialize()
+
+    const project = await store.openProject("/tmp/project")
+    const task = await store.createTask("/tmp/project", "Launch")
+    const chat = await store.createChat(project.id, { taskId: task.id })
+
+    expect(store.listTasks()).toEqual([task])
+    expect(store.getChat(chat.id)?.taskId).toBe(task.id)
+
+    await store.compact()
+
+    const reloaded = new EventStore(dataDir)
+    await reloaded.initialize()
+
+    expect(reloaded.listTasks()[0]?.title).toBe("Launch")
+    expect(reloaded.getChat(chat.id)?.taskId).toBe(task.id)
+  })
+
   test("renames a project sidebar title without changing project metadata or local path", async () => {
     const dataDir = await createTempDataDir()
     const store = new EventStore(dataDir)

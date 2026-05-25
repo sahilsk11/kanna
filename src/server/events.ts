@@ -1,13 +1,18 @@
-import type { AgentProvider, InterruptedReason, ProjectSummary, QueuedChatMessage, TranscriptEntry } from "../shared/types"
+import type { AgentProvider, InterruptedReason, ProjectSummary, QueuedChatMessage, TaskSummary, TranscriptEntry } from "../shared/types"
 
 export interface ProjectRecord extends ProjectSummary {
   sidebarTitle?: string
   deletedAt?: number
 }
 
+export interface TaskRecord extends TaskSummary {
+  deletedAt?: number
+}
+
 export interface ChatRecord {
   id: string
   projectId: string
+  taskId?: string | null
   title: string
   createdAt: number
   updatedAt: number
@@ -26,6 +31,7 @@ export interface ChatRecord {
 export interface StoreState {
   projectsById: Map<string, ProjectRecord>
   projectIdsByPath: Map<string, string>
+  tasksById: Map<string, TaskRecord>
   chatsById: Map<string, ChatRecord>
   queuedMessagesByChatId: Map<string, QueuedChatMessage[]>
 }
@@ -34,6 +40,7 @@ export interface SnapshotFile {
   v: 2
   generatedAt: number
   projects: ProjectRecord[]
+  tasks?: TaskRecord[]
   chats: ChatRecord[]
   sidebarProjectOrder?: string[]
   queuedMessages?: Array<{ chatId: string; entries: QueuedChatMessage[] }>
@@ -60,6 +67,20 @@ export type ProjectEvent = {
   projectId: string
 }
 
+export type TaskEvent = {
+  v: 2
+  type: "task_created"
+  timestamp: number
+  taskId: string
+  title: string
+  localPath: string
+} | {
+  v: 2
+  type: "task_removed"
+  timestamp: number
+  taskId: string
+}
+
 export type ChatEvent =
   | {
       v: 2
@@ -67,6 +88,7 @@ export type ChatEvent =
       timestamp: number
       chatId: string
       projectId: string
+      taskId?: string | null
       title: string
     }
   | {
@@ -183,12 +205,13 @@ export type TurnEvent =
       pendingForkSessionToken: string | null
     }
 
-export type StoreEvent = ProjectEvent | ChatEvent | MessageEvent | QueuedMessageEvent | TurnEvent
+export type StoreEvent = ProjectEvent | TaskEvent | ChatEvent | MessageEvent | QueuedMessageEvent | TurnEvent
 
 export function createEmptyState(): StoreState {
   return {
     projectsById: new Map(),
     projectIdsByPath: new Map(),
+    tasksById: new Map(),
     chatsById: new Map(),
     queuedMessagesByChatId: new Map(),
   }

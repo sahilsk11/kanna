@@ -95,6 +95,145 @@ describe("read models", () => {
     expect(sidebar.projectGroups[0]?.archivedChats?.map((chat) => chat.chatId)).toEqual(["chat-archived"])
   })
 
+  test("groups sidebar sessions by tasks with an unassigned bucket", () => {
+    const state = createEmptyState()
+    state.projectsById.set("workspace-a", {
+      id: "workspace-a",
+      localPath: "/tmp/workspace-a",
+      title: "Workspace A",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    state.projectsById.set("workspace-b", {
+      id: "workspace-b",
+      localPath: "/tmp/workspace-b",
+      title: "Workspace B",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    state.tasksById.set("task-1", {
+      id: "task-1",
+      title: "Launch",
+      localPath: "/tmp/workspace-a",
+      createdAt: 1,
+      updatedAt: 10,
+    })
+    state.chatsById.set("chat-task-a", {
+      id: "chat-task-a",
+      projectId: "workspace-a",
+      taskId: "task-1",
+      title: "Task A",
+      createdAt: 2,
+      updatedAt: 2,
+      unread: false,
+      provider: null,
+      planMode: false,
+      sessionToken: null,
+      lastTurnOutcome: null,
+    })
+    state.chatsById.set("chat-task-b", {
+      id: "chat-task-b",
+      projectId: "workspace-b",
+      taskId: "task-1",
+      title: "Task B",
+      createdAt: 3,
+      updatedAt: 3,
+      unread: false,
+      provider: null,
+      planMode: false,
+      sessionToken: null,
+      lastTurnOutcome: null,
+    })
+    state.chatsById.set("chat-unassigned", {
+      id: "chat-unassigned",
+      projectId: "workspace-b",
+      title: "Loose",
+      createdAt: 4,
+      updatedAt: 4,
+      unread: false,
+      provider: null,
+      planMode: false,
+      sessionToken: null,
+      lastTurnOutcome: null,
+    })
+
+    const sidebar = deriveSidebarData(state, new Map(), {
+      nowMs: 1_000_000,
+      sessionGrouping: "tasks",
+    })
+
+    expect(sidebar.projectGroups.map((group) => [group.kind, group.title])).toEqual([
+      ["unassigned", "Unassigned Sessions"],
+      ["task", "Launch"],
+    ])
+    expect(sidebar.projectGroups[0]?.chats.map((chat) => [chat.chatId, chat.localPath])).toEqual([
+      ["chat-unassigned", "/tmp/workspace-b"],
+    ])
+    expect(sidebar.projectGroups[1]?.chats.map((chat) => [chat.chatId, chat.localPath])).toEqual([
+      ["chat-task-b", "/tmp/workspace-b"],
+      ["chat-task-a", "/tmp/workspace-a"],
+    ])
+  })
+
+  test("skips task-grouped chats whose workspace was removed", () => {
+    const state = createEmptyState()
+    state.projectsById.set("workspace-active", {
+      id: "workspace-active",
+      localPath: "/tmp/active",
+      title: "Active",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    state.projectsById.set("workspace-removed", {
+      id: "workspace-removed",
+      localPath: "/tmp/removed",
+      title: "Removed",
+      createdAt: 1,
+      updatedAt: 5,
+      deletedAt: 5,
+    })
+    state.tasksById.set("task-1", {
+      id: "task-1",
+      title: "Launch",
+      localPath: "/tmp/active",
+      createdAt: 1,
+      updatedAt: 10,
+    })
+    state.chatsById.set("chat-visible", {
+      id: "chat-visible",
+      projectId: "workspace-active",
+      taskId: "task-1",
+      title: "Visible",
+      createdAt: 2,
+      updatedAt: 2,
+      unread: false,
+      provider: null,
+      planMode: false,
+      sessionToken: null,
+      lastTurnOutcome: null,
+    })
+    state.chatsById.set("chat-orphaned", {
+      id: "chat-orphaned",
+      projectId: "workspace-removed",
+      taskId: "task-1",
+      title: "Orphaned",
+      createdAt: 3,
+      updatedAt: 3,
+      unread: false,
+      provider: null,
+      planMode: false,
+      sessionToken: null,
+      lastTurnOutcome: null,
+    })
+
+    const sidebar = deriveSidebarData(state, new Map(), {
+      nowMs: 1_000_000,
+      sessionGrouping: "tasks",
+    })
+
+    expect(sidebar.projectGroups.flatMap((group) => group.chats.map((chat) => chat.chatId))).toEqual(["chat-visible"])
+  })
+
   test("includes available providers in chat snapshots", () => {
     const state = createEmptyState()
     state.projectsById.set("project-1", {
