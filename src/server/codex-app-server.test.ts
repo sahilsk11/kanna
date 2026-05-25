@@ -1133,6 +1133,161 @@ describe("CodexAppServerManager", () => {
     expect(toolCall.entry.tool.input).toEqual({ subagentType: "spawnAgent" })
   })
 
+  test("ignores child thread notifications while preserving the parent final answer", async () => {
+    const process = new FakeCodexProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeServerMessage({ id: message.id, result: { userAgent: "codex-test" } })
+      } else if (message.method === "thread/start") {
+        child.writeServerMessage({
+          id: message.id,
+          result: { thread: { id: "parent-thread" }, model: "gpt-5.4", reasoningEffort: "high" },
+        })
+      } else if (message.method === "turn/start") {
+        child.writeServerMessage({
+          id: message.id,
+          result: { turn: { id: "parent-turn", status: "inProgress", error: null } },
+        })
+        child.writeServerMessage({
+          method: "item/completed",
+          params: {
+            threadId: "parent-thread",
+            turnId: "parent-turn",
+            item: {
+              type: "collabAgentToolCall",
+              id: "spawn-1",
+              tool: "spawnAgent",
+              status: "completed",
+              senderThreadId: "parent-thread",
+              receiverThreadIds: ["child-thread"],
+              prompt: "Inspect files",
+              agentsStates: {
+                "child-thread": { status: "pendingInit", message: null },
+              },
+            },
+          },
+        })
+        child.writeServerMessage({
+          method: "item/completed",
+          params: {
+            threadId: "child-thread",
+            turnId: "child-turn",
+            item: {
+              type: "agentMessage",
+              id: "child-msg-1",
+              text: "child commentary should not leak",
+              phase: "commentary",
+            },
+          },
+        })
+        child.writeServerMessage({
+          method: "item/completed",
+          params: {
+            threadId: "child-thread",
+            turnId: "child-turn",
+            item: {
+              type: "commandExecution",
+              id: "child-command",
+              command: "/bin/zsh -lc pwd",
+              status: "completed",
+              aggregatedOutput: "/tmp/project\n",
+              exitCode: 0,
+            },
+          },
+        })
+        child.writeServerMessage({
+          method: "turn/completed",
+          params: {
+            threadId: "child-thread",
+            turn: { id: "child-turn", status: "completed", error: null },
+          },
+        })
+        child.writeServerMessage({
+          method: "item/completed",
+          params: {
+            threadId: "parent-thread",
+            turnId: "parent-turn",
+            item: {
+              type: "collabAgentToolCall",
+              id: "wait-1",
+              tool: "wait",
+              status: "completed",
+              senderThreadId: "parent-thread",
+              receiverThreadIds: ["child-thread"],
+              prompt: null,
+              agentsStates: {
+                "child-thread": { status: "completed", message: "child final should remain tool data only" },
+              },
+            },
+          },
+        })
+        child.writeServerMessage({
+          method: "item/completed",
+          params: {
+            threadId: "parent-thread",
+            turnId: "parent-turn",
+            item: {
+              type: "agentMessage",
+              id: "parent-msg-1",
+              text: "parent final answer",
+              phase: "final_answer",
+            },
+          },
+        })
+        child.writeServerMessage({
+          method: "turn/completed",
+          params: {
+            threadId: "parent-thread",
+            turn: { id: "parent-turn", status: "completed", error: null },
+          },
+        })
+      }
+    })
+
+    const manager = new CodexAppServerManager({
+      spawnProcess: () => process as never,
+    })
+
+    await manager.startSession({
+      chatId: "chat-1",
+      cwd: "/tmp/project",
+      model: "gpt-5.4",
+      sessionToken: null,
+    })
+
+    const turn = await manager.startTurn({
+      chatId: "chat-1",
+      model: "gpt-5.4",
+      content: "spawn an agent",
+      planMode: false,
+      onToolRequest: async () => ({}),
+    })
+
+    const events = await collectStream(turn.stream)
+    const transcriptEntries = events
+      .filter((event) => event.type === "transcript")
+      .map((event) => event.entry)
+
+    expect(transcriptEntries.map((entry) => entry.kind)).toEqual([
+      "system_init",
+      "tool_call",
+      "tool_result",
+      "tool_call",
+      "tool_result",
+      "assistant_text",
+      "result",
+    ])
+    expect(transcriptEntries.some((entry) =>
+      JSON.stringify(entry).includes("child commentary should not leak")
+    )).toBe(false)
+    expect(transcriptEntries.some((entry) =>
+      JSON.stringify(entry).includes("child-command")
+    )).toBe(false)
+    expect(transcriptEntries.some((entry) =>
+      entry.kind === "assistant_text" && entry.text === "parent final answer"
+    )).toBe(true)
+    expect(transcriptEntries.at(-1)?.kind).toBe("result")
+  })
+
   test("uses the completed webSearch query when the started item is empty", async () => {
     const process = new FakeCodexProcess((message, child) => {
       if (message.method === "initialize") {
