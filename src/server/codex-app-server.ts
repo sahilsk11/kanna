@@ -1192,6 +1192,9 @@ export class CodexAppServerManager {
 
   private async handleNotification(context: SessionContext, notification: ServerNotification) {
     if (notification.method === "thread/started") {
+      if (context.sessionToken && notification.params.thread.id !== context.sessionToken) {
+        return
+      }
       context.sessionToken = notification.params.thread.id
       if (context.pendingTurn) {
         context.pendingTurn.queue.push({
@@ -1204,6 +1207,10 @@ export class CodexAppServerManager {
 
     const pendingTurn = context.pendingTurn
     if (!pendingTurn) return
+
+    if ("threadId" in notification.params && context.sessionToken && notification.params.threadId !== context.sessionToken) {
+      return
+    }
 
     switch (notification.method) {
       case "thread/tokenUsage/updated":
