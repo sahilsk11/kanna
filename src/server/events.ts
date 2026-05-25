@@ -1,4 +1,4 @@
-import type { AgentProvider, ProjectSummary, QueuedChatMessage, TaskSummary, TranscriptEntry } from "../shared/types"
+import type { AgentProvider, InterruptedReason, ProjectSummary, QueuedChatMessage, TaskSummary, TranscriptEntry } from "../shared/types"
 
 export interface ProjectRecord extends ProjectSummary {
   sidebarTitle?: string
@@ -187,6 +187,8 @@ export type TurnEvent =
       type: "turn_cancelled"
       timestamp: number
       chatId: string
+      reason?: InterruptedReason
+      detail?: string
     }
   | {
       v: 2

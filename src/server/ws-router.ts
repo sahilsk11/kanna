@@ -1292,7 +1292,7 @@ export function createWsRouter({
           return
         }
         case "chat.delete": {
-          await agent.cancel(command.chatId)
+          await agent.cancel(command.chatId, { reason: "chat_deleted" })
           await agent.closeChat(command.chatId)
           await store.deleteChat(command.chatId)
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
@@ -1502,7 +1502,7 @@ export function createWsRouter({
           return
         }
         case "chat.cancel": {
-          await agent.cancel(command.chatId)
+          await agent.cancel(command.chatId, { reason: "user_cancelled" })
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
           return
         }
