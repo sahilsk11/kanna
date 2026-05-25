@@ -24,6 +24,7 @@ import {
   type DefaultProviderPreference,
   type EditorPreset,
   type ProviderPreference,
+  type SessionGroupingPreference,
 } from "../shared/types"
 
 interface AppSettingsFile {
@@ -31,6 +32,7 @@ interface AppSettingsFile {
   analyticsUserId?: unknown
   browserSettingsMigrated?: unknown
   theme?: unknown
+  sessionGrouping?: unknown
   chatSoundPreference?: unknown
   chatSoundId?: unknown
   terminal?: {
@@ -119,6 +121,10 @@ function clampNumber(value: unknown, fallback: number, min: number, max: number)
 
 function normalizeTheme(value: unknown): AppThemePreference {
   return value === "light" || value === "dark" || value === "system" ? value : "system"
+}
+
+function normalizeSessionGrouping(value: unknown): SessionGroupingPreference {
+  return value === "projects" ? value : "default"
 }
 
 function normalizeChatSoundPreference(value: unknown): ChatSoundPreference {
@@ -218,6 +224,7 @@ function toFilePayload(state: AppSettingsState) {
     analyticsUserId: state.analyticsUserId,
     browserSettingsMigrated: state.browserSettingsMigrated,
     theme: state.theme,
+    sessionGrouping: state.sessionGrouping,
     chatSoundPreference: state.chatSoundPreference,
     chatSoundId: state.chatSoundId,
     terminal: state.terminal,
@@ -232,6 +239,7 @@ function toSnapshot(state: AppSettingsState): AppSettingsSnapshot {
     analyticsEnabled: state.analyticsEnabled,
     browserSettingsMigrated: state.browserSettingsMigrated,
     theme: state.theme,
+    sessionGrouping: state.sessionGrouping,
     chatSoundPreference: state.chatSoundPreference,
     chatSoundId: state.chatSoundId,
     terminal: state.terminal,
@@ -276,6 +284,7 @@ function normalizeAppSettings(
     analyticsUserId,
     browserSettingsMigrated: source?.browserSettingsMigrated === true,
     theme: normalizeTheme(source?.theme),
+    sessionGrouping: normalizeSessionGrouping(source?.sessionGrouping),
     chatSoundPreference: normalizeChatSoundPreference(source?.chatSoundPreference),
     chatSoundId: normalizeChatSoundId(source?.chatSoundId),
     terminal: {
@@ -310,6 +319,7 @@ function toComparablePayload(source: AppSettingsFile) {
     analyticsUserId: typeof source.analyticsUserId === "string" ? source.analyticsUserId.trim() : source.analyticsUserId,
     browserSettingsMigrated: source.browserSettingsMigrated,
     theme: source.theme,
+    sessionGrouping: source.sessionGrouping,
     chatSoundPreference: source.chatSoundPreference,
     chatSoundId: source.chatSoundId,
     terminal: source.terminal,

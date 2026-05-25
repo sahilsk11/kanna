@@ -4,6 +4,7 @@ export const PROTOCOL_VERSION = 1 as const
 export type AgentProvider = "claude" | "codex"
 export type LlmProviderKind = "openai" | "openrouter" | "custom"
 export type AppThemePreference = "light" | "dark" | "system"
+export type SessionGroupingPreference = "default" | "projects"
 export type ChatSoundPreference = "never" | "unfocused" | "always"
 export type ChatSoundId = "blow" | "bottle" | "frog" | "funk" | "glass" | "ping" | "pop" | "purr" | "tink"
 export type DefaultProviderPreference = "last_used" | AgentProvider
@@ -425,6 +426,7 @@ export interface AppSettingsSnapshot {
   analyticsEnabled: boolean
   browserSettingsMigrated: boolean
   theme: AppThemePreference
+  sessionGrouping: SessionGroupingPreference
   chatSoundPreference: ChatSoundPreference
   chatSoundId: ChatSoundId
   terminal: {
@@ -445,6 +447,7 @@ export interface AppSettingsPatch {
   analyticsEnabled?: boolean
   browserSettingsMigrated?: boolean
   theme?: AppThemePreference
+  sessionGrouping?: SessionGroupingPreference
   chatSoundPreference?: ChatSoundPreference
   chatSoundId?: ChatSoundId
   terminal?: Partial<AppSettingsSnapshot["terminal"]>

@@ -74,6 +74,7 @@ const DEFAULT_APP_SETTINGS_SNAPSHOT: AppSettingsSnapshot = {
   analyticsEnabled: true,
   browserSettingsMigrated: false,
   theme: "system",
+  sessionGrouping: "default",
   chatSoundPreference: "always",
   chatSoundId: "funk",
   terminal: {

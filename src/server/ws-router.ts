@@ -452,6 +452,7 @@ export function createWsRouter({
     analyticsEnabled: true,
     browserSettingsMigrated: false,
     theme: "system",
+    sessionGrouping: "default",
     chatSoundPreference: "always",
     chatSoundId: "funk",
     terminal: {
