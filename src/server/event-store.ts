@@ -12,6 +12,7 @@ import {
   type SnapshotFile,
   type StoreEvent,
   type StoreState,
+  type TaskEvent,
   type TurnEvent,
   cloneTranscriptEntries,
   createEmptyState,
@@ -79,6 +80,8 @@ function getReplayEventPriority(event: StoreEvent) {
     case "project_opened":
     case "project_sidebar_renamed":
     case "project_removed":
+    case "task_created":
+    case "task_removed":
       return 0
     case "chat_created":
       return 1
@@ -148,6 +151,7 @@ export class EventStore {
   private storageReset = false
   private readonly snapshotPath: string
   private readonly projectsLogPath: string
+  private readonly tasksLogPath: string
   private readonly chatsLogPath: string
   private readonly messagesLogPath: string
   private readonly queuedMessagesLogPath: string
@@ -164,6 +168,7 @@ export class EventStore {
     this.dataDir = dataDir
     this.snapshotPath = path.join(this.dataDir, "snapshot.json")
     this.projectsLogPath = path.join(this.dataDir, "projects.jsonl")
+    this.tasksLogPath = path.join(this.dataDir, "tasks.jsonl")
     this.chatsLogPath = path.join(this.dataDir, "chats.jsonl")
     this.messagesLogPath = path.join(this.dataDir, "messages.jsonl")
     this.queuedMessagesLogPath = path.join(this.dataDir, "queued-messages.jsonl")
@@ -176,6 +181,7 @@ export class EventStore {
     await mkdir(this.dataDir, { recursive: true })
     await mkdir(this.transcriptsDir, { recursive: true })
     await this.ensureFile(this.projectsLogPath)
+    await this.ensureFile(this.tasksLogPath)
     await this.ensureFile(this.chatsLogPath)
     await this.ensureFile(this.messagesLogPath)
     await this.ensureFile(this.queuedMessagesLogPath)
@@ -203,6 +209,7 @@ export class EventStore {
     await Promise.all([
       Bun.write(this.snapshotPath, ""),
       Bun.write(this.projectsLogPath, ""),
+      Bun.write(this.tasksLogPath, ""),
       Bun.write(this.chatsLogPath, ""),
       Bun.write(this.messagesLogPath, ""),
       Bun.write(this.queuedMessagesLogPath, ""),
@@ -226,6 +233,9 @@ export class EventStore {
       for (const project of parsed.projects) {
         this.state.projectsById.set(project.id, { ...project })
         this.state.projectIdsByPath.set(project.localPath, project.id)
+      }
+      for (const task of parsed.tasks ?? []) {
+        this.state.tasksById.set(task.id, { ...task })
       }
       for (const chat of parsed.chats) {
         this.state.chatsById.set(chat.id, {
@@ -258,6 +268,7 @@ export class EventStore {
   private resetState() {
     this.state.projectsById.clear()
     this.state.projectIdsByPath.clear()
+    this.state.tasksById.clear()
     this.state.chatsById.clear()
     this.state.queuedMessagesByChatId.clear()
     this.sidebarProjectOrder = []
@@ -354,10 +365,11 @@ export class EventStore {
     if (this.storageReset) return
     const replayEvents = [
       ...await this.loadReplayEvents(this.projectsLogPath, 0),
-      ...await this.loadReplayEvents(this.chatsLogPath, 1),
-      ...await this.loadReplayEvents(this.messagesLogPath, 2),
-      ...await this.loadReplayEvents(this.queuedMessagesLogPath, 3),
-      ...await this.loadReplayEvents(this.turnsLogPath, 4),
+      ...await this.loadReplayEvents(this.tasksLogPath, 1),
+      ...await this.loadReplayEvents(this.chatsLogPath, 2),
+      ...await this.loadReplayEvents(this.messagesLogPath, 3),
+      ...await this.loadReplayEvents(this.queuedMessagesLogPath, 4),
+      ...await this.loadReplayEvents(this.turnsLogPath, 5),
     ]
     if (this.storageReset) return
 
@@ -455,10 +467,30 @@ export class EventStore {
         project.updatedAt = event.timestamp
         break
       }
+      case "task_created": {
+        const localPath = resolveLocalPath(event.localPath)
+        const task = {
+          id: event.taskId,
+          localPath,
+          title: event.title,
+          createdAt: event.timestamp,
+          updatedAt: event.timestamp,
+        }
+        this.state.tasksById.set(task.id, task)
+        break
+      }
+      case "task_removed": {
+        const task = this.state.tasksById.get(event.taskId)
+        if (!task) break
+        task.deletedAt = event.timestamp
+        task.updatedAt = event.timestamp
+        break
+      }
       case "chat_created": {
       const chat = {
           id: event.chatId,
           projectId: event.projectId,
+          taskId: event.taskId ?? null,
           title: event.title,
           createdAt: event.timestamp,
           updatedAt: event.timestamp,
@@ -669,6 +701,21 @@ export class EventStore {
     return this.state.projectsById.get(projectId)!
   }
 
+  async createTask(localPath: string, title: string) {
+    const normalized = resolveLocalPath(localPath)
+    const taskId = crypto.randomUUID()
+    const event: TaskEvent = {
+      v: STORE_VERSION,
+      type: "task_created",
+      timestamp: Date.now(),
+      taskId,
+      localPath: normalized,
+      title: title.trim() || path.basename(normalized) || normalized,
+    }
+    await this.append(this.tasksLogPath, event)
+    return this.state.tasksById.get(taskId)!
+  }
+
   async removeProject(projectId: string) {
     const project = this.getProject(projectId)
     if (!project) {
@@ -725,10 +772,17 @@ export class EventStore {
     return this.writeChain
   }
 
-  async createChat(projectId: string) {
+  async createChat(projectId: string, options?: { taskId?: string | null }) {
     const project = this.state.projectsById.get(projectId)
     if (!project || project.deletedAt) {
       throw new Error("Project not found")
+    }
+    const taskId = options?.taskId ?? null
+    if (taskId) {
+      const task = this.state.tasksById.get(taskId)
+      if (!task || task.deletedAt) {
+        throw new Error("Task not found")
+      }
     }
     const chatId = crypto.randomUUID()
     const event: ChatEvent = {
@@ -737,6 +791,7 @@ export class EventStore {
       timestamp: Date.now(),
       chatId,
       projectId,
+      taskId,
       title: "New Chat",
     }
     await this.append(this.chatsLogPath, event)
@@ -758,6 +813,7 @@ export class EventStore {
       timestamp: createdAt,
       chatId,
       projectId: sourceChat.projectId,
+      taskId: sourceChat.taskId ?? null,
       title: getForkedChatTitle(sourceChat.title),
     }
     await this.append(this.chatsLogPath, createEvent)
@@ -1169,6 +1225,10 @@ export class EventStore {
     return [...this.state.projectsById.values()].filter((project) => !project.deletedAt)
   }
 
+  listTasks() {
+    return [...this.state.tasksById.values()].filter((task) => !task.deletedAt)
+  }
+
   listChatsByProject(projectId: string) {
     return [...this.state.chatsById.values()]
       .filter((chat) => chat.projectId === projectId && !chat.deletedAt && !chat.archivedAt)
@@ -1211,6 +1271,7 @@ export class EventStore {
       v: STORE_VERSION,
       generatedAt: Date.now(),
       projects: this.listProjects().map((project) => ({ ...project })),
+      tasks: this.listTasks().map((task) => ({ ...task })),
       chats: [...this.state.chatsById.values()]
         .filter((chat) => !chat.deletedAt)
         .map((chat) => ({ ...chat })),
@@ -1230,6 +1291,7 @@ export class EventStore {
     await Bun.write(this.snapshotPath, JSON.stringify(snapshot, null, 2))
     await Promise.all([
       Bun.write(this.projectsLogPath, ""),
+      Bun.write(this.tasksLogPath, ""),
       Bun.write(this.chatsLogPath, ""),
       Bun.write(this.messagesLogPath, ""),
       Bun.write(this.queuedMessagesLogPath, ""),
@@ -1271,6 +1333,7 @@ export class EventStore {
   private async shouldCompact() {
     const sizes = await Promise.all([
       Bun.file(this.projectsLogPath).size,
+      Bun.file(this.tasksLogPath).size,
       Bun.file(this.chatsLogPath).size,
       Bun.file(this.messagesLogPath).size,
       Bun.file(this.queuedMessagesLogPath).size,

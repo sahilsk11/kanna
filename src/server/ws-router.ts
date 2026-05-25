@@ -626,6 +626,7 @@ export function createWsRouter({
     const data = deriveSidebarData(store.state, agent.getActiveStatuses(), {
       sidebarProjectOrder: getSidebarProjectOrder(store),
       drainingChatIds: agent.getDrainingChatIds(),
+      sessionGrouping: resolvedAppSettings.getSnapshot().sessionGrouping,
     })
     if (isSendToStartingProfilingEnabled()) {
       const totalChats = data.projectGroups.reduce((count, group) => count + group.chats.length, 0)
@@ -1136,6 +1137,9 @@ export function createWsRouter({
           if (command.patch.analyticsEnabled !== undefined && !previousAnalyticsEnabled && snapshot.analyticsEnabled) {
             resolvedAnalytics.track("analytics_enabled")
           }
+          if (command.patch.sessionGrouping !== undefined) {
+            await broadcastFilteredSnapshots({ includeSidebar: true, includeAppSettings: true })
+          }
           return
         }
         case "settings.readLlmProvider": {
@@ -1207,6 +1211,20 @@ export function createWsRouter({
           }
           break
         }
+        case "task.create": {
+          await ensureProjectDirectory(command.localPath)
+          const normalizedPath = resolveLocalPath(command.localPath)
+          const existingProjectId = store.state.projectIdsByPath.get(normalizedPath)
+          const project = await store.openProject(command.localPath, command.title)
+          const task = await store.createTask(command.localPath, command.title)
+          await refreshDiscovery()
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: { taskId: task.id, projectId: project.id } })
+          if (!existingProjectId) {
+            resolvedAnalytics.track("project_opened")
+          }
+          await broadcastFilteredSnapshots({ includeSidebar: true, includeLocalProjects: true })
+          return
+        }
         case "project.rename": {
           await store.renameProjectSidebarTitle(command.projectId, command.title)
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id })
@@ -1243,7 +1261,7 @@ export function createWsRouter({
           break
         }
         case "chat.create": {
-          const chat = await store.createChat(command.projectId)
+          const chat = await store.createChat(command.projectId, { taskId: command.taskId })
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: { chatId: chat.id } })
           resolvedAnalytics.track("chat_created")
           await broadcastChatAndSidebar(chat.id)

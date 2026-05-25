@@ -595,8 +595,14 @@ export interface ProjectRequest {
   title: string
 }
 
+export interface TaskRequest {
+  localPath: string
+  title: string
+}
+
 export type StartChatIntent =
   | { kind: "project_id"; projectId: string }
+  | { kind: "task"; taskId: string; localPath: string }
   | { kind: "local_path"; localPath: string }
   | { kind: "project_request"; project: ProjectRequest }
 
@@ -677,9 +683,11 @@ export interface KannaState {
   closeAddProjectModal: () => void
   loadOlderHistory: () => Promise<void>
   handleCreateChat: (projectId: string) => Promise<void>
+  handleCreateTaskChat: (taskId: string, localPath: string) => Promise<void>
   handleForkChat: (chat: SidebarChatRow) => Promise<void>
   handleOpenLocalProject: (localPath: string) => Promise<void>
   handleCreateProject: (project: ProjectRequest) => Promise<void>
+  handleCreateTask: (task: TaskRequest) => Promise<void>
   handleCheckForUpdates: (options?: { force?: boolean }) => Promise<void>
   handleInstallUpdate: () => Promise<void>
   handleReadAppSettings: () => Promise<void>
@@ -1361,12 +1369,12 @@ export function useKannaState(activeChatId: string | null): KannaState {
     }
   }, [activeChatId, hasOlderHistory, historyCursor, isHistoryLoading, socket])
 
-  const createChatForProject = useCallback(async (projectId: string) => {
+  const createChatForProject = useCallback(async (projectId: string, taskId?: string | null) => {
     const chatPreferences = useChatPreferencesStore.getState()
     const sourceComposerState = activeChatId
       ? chatPreferences.getComposerState(activeChatId)
       : chatPreferences.getComposerState(NEW_CHAT_COMPOSER_ID)
-    const result = await socket.command<{ chatId: string }>({ type: "chat.create", projectId })
+    const result = await socket.command<{ chatId: string }>({ type: "chat.create", projectId, taskId })
     chatPreferences.initializeComposerForChat(result.chatId, { sourceState: sourceComposerState })
     setSelectedProjectId(projectId)
     setPendingChatId(result.chatId)
@@ -1378,6 +1386,11 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const resolveProjectIdForStartChat = useCallback(async (intent: StartChatIntent): Promise<{ projectId: string; localPath?: string }> => {
     if (intent.kind === "project_id") {
       return { projectId: intent.projectId }
+    }
+
+    if (intent.kind === "task") {
+      const result = await socket.command<{ projectId: string }>({ type: "project.open", localPath: intent.localPath })
+      return { projectId: result.projectId, localPath: intent.localPath }
     }
 
     if (intent.kind === "local_path") {
@@ -1397,7 +1410,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     try {
       const localPath = intent.kind === "project_id"
         ? null
-        : intent.kind === "local_path"
+        : intent.kind === "local_path" || intent.kind === "task"
           ? intent.localPath
           : intent.project.localPath
       if (localPath) {
@@ -1405,7 +1418,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
       }
 
       const { projectId } = await resolveProjectIdForStartChat(intent)
-      await createChatForProject(projectId)
+      await createChatForProject(projectId, intent.kind === "task" ? intent.taskId : null)
     } catch (error) {
       setCommandError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -1415,6 +1428,10 @@ export function useKannaState(activeChatId: string | null): KannaState {
 
   const handleCreateChat = useCallback(async (projectId: string) => {
     await startChatFromIntent({ kind: "project_id", projectId })
+  }, [startChatFromIntent])
+
+  const handleCreateTaskChat = useCallback(async (taskId: string, localPath: string) => {
+    await startChatFromIntent({ kind: "task", taskId, localPath })
   }, [startChatFromIntent])
 
   const handleForkChat = useCallback(async (chat: SidebarChatRow) => {
@@ -1443,6 +1460,23 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const handleCreateProject = useCallback(async (project: ProjectRequest) => {
     await startChatFromIntent({ kind: "project_request", project })
   }, [startChatFromIntent])
+
+  const handleCreateTask = useCallback(async (task: TaskRequest) => {
+    try {
+      setStartingLocalPath(task.localPath)
+      await socket.command<{ taskId: string; projectId: string }>({
+        type: "task.create",
+        localPath: task.localPath,
+        title: task.title,
+      })
+      setCommandError(null)
+      setSidebarOpen(false)
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setStartingLocalPath(null)
+    }
+  }, [socket])
 
   const handleCheckForUpdates = useCallback(async (options?: { force?: boolean }) => {
     try {
@@ -2056,9 +2090,11 @@ export function useKannaState(activeChatId: string | null): KannaState {
     closeAddProjectModal,
     loadOlderHistory,
     handleCreateChat,
+    handleCreateTaskChat,
     handleForkChat,
     handleOpenLocalProject,
     handleCreateProject,
+    handleCreateTask,
     handleCheckForUpdates,
     handleInstallUpdate,
     handleReadAppSettings,

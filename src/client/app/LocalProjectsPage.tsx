@@ -23,6 +23,8 @@ export function LocalProjectsPage() {
         }}
         onOpenProject={state.handleOpenLocalProject}
         onCreateProject={state.handleCreateProject}
+        onCreateTask={state.handleCreateTask}
+        sessionGrouping={state.appSettings?.sessionGrouping ?? "default"}
       />
     </div>
   )

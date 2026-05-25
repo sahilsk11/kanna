@@ -374,6 +374,14 @@ export interface ProjectSummary {
   updatedAt: number
 }
 
+export interface TaskSummary {
+  id: string
+  title: string
+  localPath: string
+  createdAt: number
+  updatedAt: number
+}
+
 export interface SidebarChatRow {
   _id: string
   _creationTime: number
@@ -388,12 +396,17 @@ export interface SidebarChatRow {
   canFork?: boolean
 }
 
+export type SidebarProjectGroupKind = "workspace" | "task" | "unassigned"
+
 export interface SidebarProjectGroup {
   groupKey: string
+  kind?: SidebarProjectGroupKind
   title: string
   realTitle: string
   sidebarTitle?: string
   localPath: string
+  projectId?: string
+  taskId?: string
   chats: SidebarChatRow[]
   previewChats: SidebarChatRow[]
   olderChats: SidebarChatRow[]
@@ -420,6 +433,7 @@ export interface LocalProjectsSnapshot {
     platform: NodeJS.Platform
   }
   projects: LocalProjectSummary[]
+  tasks: TaskSummary[]
 }
 
 export interface AppSettingsSnapshot {

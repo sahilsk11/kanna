@@ -208,6 +208,9 @@ function KannaLayout() {
   const handleSidebarCreateChat = useCallback((projectId: string) => {
     void state.handleCreateChat(projectId)
   }, [state.handleCreateChat])
+  const handleSidebarCreateTaskChat = useCallback((taskId: string, localPath: string) => {
+    void state.handleCreateTaskChat(taskId, localPath)
+  }, [state.handleCreateTaskChat])
   const handleSidebarForkChat = useCallback((chat: Parameters<typeof state.handleForkChat>[0]) => {
     void state.handleForkChat(chat)
   }, [state.handleForkChat])
@@ -261,6 +264,7 @@ function KannaLayout() {
       onCollapse={state.collapseSidebar}
       onExpand={state.expandSidebar}
       onCreateChat={handleSidebarCreateChat}
+      onCreateTaskChat={handleSidebarCreateTaskChat}
       onForkChat={handleSidebarForkChat}
       currentProjectId={state.activeProjectId}
       keybindings={state.keybindings}

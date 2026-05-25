@@ -1,4 +1,4 @@
-import { useMemo, useState, type ComponentType, type ReactNode } from "react"
+import { useMemo, useState, type ComponentType, type FormEvent, type ReactNode } from "react"
 import {
   ArrowLeftRight,
   Check,
@@ -20,6 +20,7 @@ import { getPathBasename } from "../lib/formatters"
 import { cn } from "../lib/utils"
 import { NewProjectModal } from "./NewProjectModal"
 import { Button } from "./ui/button"
+import { Input } from "./ui/input"
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip"
 
 interface LocalDevProps {
@@ -32,6 +33,8 @@ interface LocalDevProps {
   onNewProjectOpenChange: (open: boolean) => void
   onOpenProject: (localPath: string) => Promise<void>
   onCreateProject: (project: { mode: "new" | "existing"; localPath: string; title: string }) => Promise<void>
+  onCreateTask: (task: { localPath: string; title: string }) => Promise<void>
+  sessionGrouping: "default" | "tasks"
 }
 
 function CopyButton({ text }: { text: string }) {
@@ -165,6 +168,76 @@ function ProjectCard({
   )
 }
 
+function TaskCreateForm({
+  commandError,
+  onCreateTask,
+}: {
+  commandError: string | null
+  onCreateTask: (task: { localPath: string; title: string }) => Promise<void>
+}) {
+  const [title, setTitle] = useState("")
+  const [localPath, setLocalPath] = useState("")
+  const [submitting, setSubmitting] = useState(false)
+  const trimmedTitle = title.trim()
+  const trimmedPath = localPath.trim()
+  const canSubmit = Boolean(trimmedTitle && trimmedPath && !submitting)
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!canSubmit) return
+    try {
+      setSubmitting(true)
+      await onCreateTask({ title: trimmedTitle, localPath: trimmedPath })
+      setTitle("")
+      setLocalPath("")
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  return (
+    <div className="w-full max-w-2xl px-6 pb-10">
+      <form onSubmit={(event) => void handleSubmit(event)} className="border-b border-border pb-6">
+        <div className="mb-5">
+          <h2 className="text-base font-medium text-foreground">Create Task</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Tasks group related sessions while each session still runs in its own workspace path.
+          </p>
+        </div>
+        <div className="grid gap-4">
+          <label className="grid gap-2">
+            <span className="text-sm font-medium text-foreground">Task name</span>
+            <Input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="Mobile redesign"
+            />
+          </label>
+          <label className="grid gap-2">
+            <span className="text-sm font-medium text-foreground">Default path</span>
+            <Input
+              value={localPath}
+              onChange={(event) => setLocalPath(event.target.value)}
+              placeholder="~/Projects/my-app"
+            />
+          </label>
+        </div>
+        {commandError ? (
+          <div className="mt-4 rounded-lg border border-destructive/20 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            {commandError}
+          </div>
+        ) : null}
+        <div className="mt-5 flex justify-end">
+          <Button type="submit" size="sm" disabled={!canSubmit}>
+            {submitting ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Plus className="mr-1.5 h-4 w-4" />}
+            Create Task
+          </Button>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 export function LocalDev({
   connectionStatus,
   ready,
@@ -175,10 +248,13 @@ export function LocalDev({
   onNewProjectOpenChange,
   onOpenProject,
   onCreateProject,
+  onCreateTask,
+  sessionGrouping,
 }: LocalDevProps) {
   const projects = useMemo(() => snapshot?.projects ?? [], [snapshot?.projects])
   const isConnecting = connectionStatus === "connecting" || !ready
   const isConnected = connectionStatus === "connected" && ready
+  const isTaskGrouping = sessionGrouping === "tasks"
 
   return (
     <div className="flex-1 flex flex-col min-w-0 bg-background overflow-y-auto">
@@ -263,11 +339,16 @@ export function LocalDev({
       ) : (
         <>
           <PageHeader
-            title={snapshot?.machine.displayName ?? "Local Projects"}
-            subtitle={`${APP_NAME} is connected, choose a project below to get started.`}
+            title={isTaskGrouping ? "Tasks" : (snapshot?.machine.displayName ?? "Local Projects")}
+            subtitle={isTaskGrouping
+              ? "Create a task to group related sessions across one or more workspaces."
+              : `${APP_NAME} is connected, choose a project below to get started.`}
           />
 
-          <div className="w-full px-6 mb-10">
+          {isTaskGrouping ? (
+            <TaskCreateForm commandError={commandError} onCreateTask={onCreateTask} />
+          ) : (
+            <div className="w-full px-6 mb-10">
             <div className="flex items-baseline justify-between mb-3">
               <h2 className="text-[13px] font-medium text-muted-foreground uppercase tracking-wider">Projects</h2>
               <Button variant="default" size="sm" onClick={() => onNewProjectOpenChange(true)}>
@@ -300,7 +381,8 @@ export function LocalDev({
                 {commandError}
               </div>
             ) : null}
-          </div>
+            </div>
+          )}
         </>
       )}
 

@@ -54,6 +54,7 @@ interface KannaSidebarProps {
   onCollapse: () => void
   onExpand: () => void
   onCreateChat: (projectId: string) => void
+  onCreateTaskChat: (taskId: string, localPath: string) => void
   onForkChat: (chat: SidebarChatRow) => void
   currentProjectId: string | null
   keybindings: KeybindingsSnapshot | null
@@ -86,6 +87,7 @@ function KannaSidebarImpl({
   onCollapse,
   onExpand,
   onCreateChat,
+  onCreateTaskChat,
   onForkChat,
   currentProjectId,
   keybindings,
@@ -116,6 +118,7 @@ function KannaSidebarImpl({
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [archivedProjectId, setArchivedProjectId] = useState<string | null>(null)
+  const isTaskMode = data.projectGroups.some((group) => group.kind === "task" || group.kind === "unassigned")
   const resolvedKeybindings = useMemo(() => getResolvedKeybindings(keybindings), [keybindings])
   const visibleChats = useMemo(
     () => getVisibleSidebarChats(data.projectGroups, collapsedSections, expandedGroups),
@@ -125,11 +128,6 @@ function KannaSidebarImpl({
   const visibleIndexByChatId = useMemo(
     () => new Map(visibleChats.map((entry) => [entry.chat.chatId, entry.visibleIndex])),
     [visibleChats]
-  )
-
-  const projectIdByPath = useMemo(
-    () => new Map(data.projectGroups.map((group) => [group.localPath, group.groupKey])),
-    [data.projectGroups]
   )
 
   const activeVisibleCount = visibleChats.length
@@ -427,7 +425,7 @@ function KannaSidebarImpl({
                 onClose()
               }}
               className="size-10 rounded-lg hover:!border-border/0 md:hidden"
-              title="New project"
+              title={isTaskMode ? "New task" : "New project"}
             >
               <Plus className="h-5 w-5" />
             </Button>
@@ -459,7 +457,7 @@ function KannaSidebarImpl({
                 onClose()
               }}
               className="hidden md:inline-flex size-10 rounded-lg hover:!border-border/0"
-              title="New project"
+              title={isTaskMode ? "New task" : "New project"}
             >
               <Plus className="size-4" />
             </Button>
@@ -512,10 +510,14 @@ function KannaSidebarImpl({
               onToggleExpandedGroup={toggleExpandedGroup}
               renderChatRow={renderChatRow}
               onShowArchivedProject={setArchivedProjectId}
-              onNewLocalChat={(localPath) => {
-                const projectId = projectIdByPath.get(localPath)
-                if (projectId) {
-                  onCreateChat(projectId)
+              onNewLocalChat={(group) => {
+                const groupKind = group.kind ?? "workspace"
+                if (groupKind === "task" && group.taskId && group.localPath) {
+                  onCreateTaskChat(group.taskId, group.localPath)
+                  return
+                }
+                if (groupKind === "workspace") {
+                  onCreateChat(group.projectId ?? group.groupKey)
                 }
               }}
               onCopyPath={onCopyPath}

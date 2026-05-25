@@ -72,6 +72,7 @@ export type TerminalEvent =
 export type ClientCommand =
   | { type: "project.open"; localPath: string }
   | { type: "project.create"; localPath: string; title: string }
+  | { type: "task.create"; localPath: string; title: string }
   | { type: "project.rename"; projectId: string; title: string }
   | { type: "project.remove"; projectId: string }
   | { type: "sidebar.reorderProjectGroups"; projectIds: string[] }
@@ -115,7 +116,7 @@ export type ClientCommand =
       column?: number
       editor?: EditorOpenSettings
     }
-  | { type: "chat.create"; projectId: string }
+  | { type: "chat.create"; projectId: string; taskId?: string | null }
   | { type: "chat.fork"; chatId: string }
   | { type: "chat.rename"; chatId: string; title: string }
   | { type: "chat.archive"; chatId: string }

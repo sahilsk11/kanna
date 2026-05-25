@@ -65,6 +65,7 @@ export function deriveSidebarData(
     nowMs?: number
     sidebarProjectOrder?: string[]
     drainingChatIds?: Set<string>
+    sessionGrouping?: "default" | "tasks"
   }
 ): SidebarData {
   const nowMs = options?.nowMs ?? Date.now()
@@ -96,27 +97,100 @@ export function deriveSidebarData(
     ...unorderedProjects.filter((project) => !orderedProjectIds.has(project.id)),
   ]
 
-  function toSidebarChatRows(project: NonNullable<typeof projects[number]>, projectChats: ChatRecord[]) {
+  function toSidebarChatRows(projectChats: ChatRecord[]) {
     return projectChats
       .sort((a, b) => getSidebarChatSortTimestamp(b) - getSidebarChatSortTimestamp(a))
-      .map((chat) => ({
-        _id: chat.id,
-        _creationTime: chat.createdAt,
-        chatId: chat.id,
-        title: chat.title,
-        status: deriveStatus(chat, activeStatuses.get(chat.id)),
-        unread: chat.unread,
-        localPath: project.localPath,
-        provider: chat.provider,
-        lastMessageAt: chat.lastMessageAt,
-        hasAutomation: false,
-        canFork: canForkChat(chat, activeStatuses, drainingChatIds) || undefined,
-      }))
+      .map((chat) => {
+        const project = state.projectsById.get(chat.projectId)
+        return {
+          _id: chat.id,
+          _creationTime: chat.createdAt,
+          chatId: chat.id,
+          title: chat.title,
+          status: deriveStatus(chat, activeStatuses.get(chat.id)),
+          unread: chat.unread,
+          localPath: project?.localPath ?? "",
+          provider: chat.provider,
+          lastMessageAt: chat.lastMessageAt,
+          hasAutomation: false,
+          canFork: canForkChat(chat, activeStatuses, drainingChatIds) || undefined,
+        }
+      })
+  }
+
+  if (options?.sessionGrouping === "tasks") {
+    const chatsByTaskId = new Map<string, ChatRecord[]>()
+    const archivedChatsByTaskId = new Map<string, ChatRecord[]>()
+    const unassignedChats: ChatRecord[] = []
+    const unassignedArchivedChats: ChatRecord[] = []
+    const activeTasks = [...state.tasksById.values()].filter((task) => !task.deletedAt)
+    const activeTaskIds = new Set(activeTasks.map((task) => task.id))
+
+    for (const chat of state.chatsById.values()) {
+      if (chat.deletedAt) continue
+      const taskId = chat.taskId && activeTaskIds.has(chat.taskId) ? chat.taskId : null
+      if (!taskId) {
+        ;(chat.archivedAt ? unassignedArchivedChats : unassignedChats).push(chat)
+        continue
+      }
+      const targetMap = chat.archivedAt ? archivedChatsByTaskId : chatsByTaskId
+      const taskChats = targetMap.get(taskId)
+      if (taskChats) {
+        taskChats.push(chat)
+      } else {
+        targetMap.set(taskId, [chat])
+      }
+    }
+
+    const taskGroups = activeTasks
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .map((task): SidebarProjectGroup => {
+        const chats = toSidebarChatRows(chatsByTaskId.get(task.id) ?? [])
+        const archivedChats = toSidebarChatRows(archivedChatsByTaskId.get(task.id) ?? [])
+        const { previewChats, olderChats } = getSidebarChatBuckets(chats, nowMs)
+
+        return {
+          groupKey: task.id,
+          kind: "task",
+          taskId: task.id,
+          title: task.title,
+          realTitle: task.title,
+          localPath: task.localPath,
+          chats,
+          previewChats,
+          olderChats,
+          ...(archivedChats.length ? { archivedChats } : {}),
+          defaultCollapsed: chats.length > 0 && chats.every((chat) => !isSidebarChatRecent(chat, nowMs)),
+        }
+      })
+
+    const unassignedRows = toSidebarChatRows(unassignedChats)
+    const unassignedArchivedRows = toSidebarChatRows(unassignedArchivedChats)
+    const unassignedBuckets = getSidebarChatBuckets(unassignedRows, nowMs)
+    const unassignedGroup: SidebarProjectGroup = {
+      groupKey: "unassigned",
+      kind: "unassigned",
+      title: "Unassigned Sessions",
+      realTitle: "Unassigned Sessions",
+      localPath: "",
+      chats: unassignedRows,
+      previewChats: unassignedBuckets.previewChats,
+      olderChats: unassignedBuckets.olderChats,
+      ...(unassignedArchivedRows.length ? { archivedChats: unassignedArchivedRows } : {}),
+      defaultCollapsed: unassignedRows.length > 0 && unassignedRows.every((chat) => !isSidebarChatRecent(chat, nowMs)),
+    }
+
+    return {
+      projectGroups: [
+        unassignedGroup,
+        ...taskGroups,
+      ],
+    }
   }
 
   const projectGroups: SidebarProjectGroup[] = projects.map((project) => {
-    const chats = toSidebarChatRows(project, chatsByProjectId.get(project.id) ?? [])
-    const archivedChats = toSidebarChatRows(project, archivedChatsByProjectId.get(project.id) ?? [])
+    const chats = toSidebarChatRows(chatsByProjectId.get(project.id) ?? [])
+    const archivedChats = toSidebarChatRows(archivedChatsByProjectId.get(project.id) ?? [])
     const { previewChats, olderChats } = getSidebarChatBuckets(chats, nowMs)
 
     return {
@@ -177,6 +251,10 @@ export function deriveLocalProjectsSnapshot(
       platform: process.platform,
     },
     projects: [...projects.values()].sort((a, b) => (b.lastOpenedAt ?? 0) - (a.lastOpenedAt ?? 0)),
+    tasks: [...state.tasksById.values()]
+      .filter((task) => !task.deletedAt)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .map((task) => ({ ...task })),
   }
 }
 
