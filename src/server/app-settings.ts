@@ -124,7 +124,7 @@ function normalizeTheme(value: unknown): AppThemePreference {
 }
 
 function normalizeSessionGrouping(value: unknown): SessionGroupingPreference {
-  return value === "projects" ? value : "default"
+  return value === "tasks" || value === "projects" ? "tasks" : "default"
 }
 
 function normalizeChatSoundPreference(value: unknown): ChatSoundPreference {

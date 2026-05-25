@@ -129,7 +129,7 @@ describe("AppSettingsManager", () => {
 
     const snapshot = await manager.writePatch({
       theme: "dark",
-      sessionGrouping: "projects",
+      sessionGrouping: "tasks",
       chatSoundId: "glass",
       terminal: { scrollbackLines: 2_500 },
       editor: { preset: "vscode" },
@@ -150,7 +150,7 @@ describe("AppSettingsManager", () => {
     }
 
     expect(snapshot.theme).toBe("dark")
-    expect(snapshot.sessionGrouping).toBe("projects")
+    expect(snapshot.sessionGrouping).toBe("tasks")
     expect(snapshot.chatSoundId).toBe("glass")
     expect(snapshot.terminal.scrollbackLines).toBe(2_500)
     expect(snapshot.terminal.minColumnWidth).toBe(450)
@@ -159,7 +159,7 @@ describe("AppSettingsManager", () => {
     expect(snapshot.providerDefaults.codex.modelOptions.fastMode).toBe(true)
     expect(nextPayload.analyticsUserId).toBe(initialPayload.analyticsUserId)
     expect(nextPayload.theme).toBe("dark")
-    expect(nextPayload.sessionGrouping).toBe("projects")
+    expect(nextPayload.sessionGrouping).toBe("tasks")
     expect(nextPayload.chatSoundId).toBe("glass")
 
     manager.dispose()
