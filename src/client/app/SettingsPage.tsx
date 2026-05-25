@@ -130,7 +130,7 @@ const chatSoundPreferenceOptions: { value: ChatSoundPreference; label: string }[
 
 const sessionGroupingOptions: { value: SessionGroupingPreference; label: string }[] = [
   { value: "default", label: "Default" },
-  { value: "projects", label: "Projects" },
+  { value: "tasks", label: "Tasks" },
 ]
 
 const analyticsOptions = [
