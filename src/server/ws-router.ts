@@ -15,7 +15,7 @@ import { EventStore } from "./event-store"
 import { openExternal } from "./external-open"
 import { KeybindingsManager } from "./keybindings"
 import { killLocalHttpServer, listLocalHttpServers } from "./local-http-servers"
-import { ensureProjectDirectory, resolveLocalPath, validateExistingProjectDirectory } from "./paths"
+import { ensureProjectDirectory, getDefaultProjectPath, resolveLocalPath, validateExistingProjectDirectory } from "./paths"
 import { readProjectQuickActions, writeProjectQuickActions } from "./project-quick-actions"
 import { writeStandaloneTranscriptExport } from "./standalone-export"
 import { TerminalManager } from "./terminal-manager"
@@ -131,6 +131,7 @@ interface CreateWsRouterArgs {
   refreshDiscovery: () => Promise<DiscoveredProject[]>
   getDiscoveredProjects: () => DiscoveredProject[]
   machineDisplayName: string
+  defaultProjectPath?: string
   updateManager: UpdateManager | null
 }
 
@@ -385,6 +386,7 @@ export function createWsRouter({
   refreshDiscovery,
   getDiscoveredProjects,
   machineDisplayName,
+  defaultProjectPath = getDefaultProjectPath(),
   updateManager,
 }: CreateWsRouterArgs) {
   const sockets = new Set<ServerWebSocket<ClientState>>()
@@ -671,7 +673,7 @@ export function createWsRouter({
 
     if (topic.type === "local-projects") {
       const discoveredProjects = getDiscoveredProjects()
-      const data = deriveLocalProjectsSnapshot(store.state, discoveredProjects, machineDisplayName)
+      const data = deriveLocalProjectsSnapshot(store.state, discoveredProjects, machineDisplayName, { defaultProjectPath })
 
       return {
         v: PROTOCOL_VERSION,

@@ -2,6 +2,10 @@ import { mkdir, stat } from "node:fs/promises"
 import { homedir } from "node:os"
 import path from "node:path"
 
+export function getDefaultProjectPath() {
+  return resolveLocalPath(process.env.KANNA_DEFAULT_PROJECT_PATH ?? "~/projects")
+}
+
 export function resolveLocalPath(localPath: string) {
   const trimmed = localPath.trim()
   if (!trimmed) {
