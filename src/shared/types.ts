@@ -432,6 +432,7 @@ export interface LocalProjectsSnapshot {
     displayName: string
     platform: NodeJS.Platform
   }
+  defaultProjectPath: string
   projects: LocalProjectSummary[]
   tasks: TaskSummary[]
 }

@@ -53,6 +53,16 @@ describe("read models", () => {
     expect(deriveLocalProjectsSnapshot(state, [], "Machine").projects[0]?.title).toBe("Project")
   })
 
+  test("includes the configured default project path in local project snapshots", () => {
+    const state = createEmptyState()
+
+    const snapshot = deriveLocalProjectsSnapshot(state, [], "Machine", {
+      defaultProjectPath: "/home/sahil/projects",
+    })
+
+    expect(snapshot.defaultProjectPath).toBe("/home/sahil/projects")
+  })
+
   test("keeps archived chats out of the main sidebar rows", () => {
     const state = createEmptyState()
     state.projectsById.set("project-1", {

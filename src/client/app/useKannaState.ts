@@ -764,6 +764,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const [standaloneShareComplete, setStandaloneShareComplete] = useState(false)
   const [startingLocalPath, setStartingLocalPath] = useState<string | null>(null)
   const [pendingChatId, setPendingChatId] = useState<string | null>(null)
+  const pendingChatIdRef = useRef<string | null>(null)
   const [optimisticUserPrompts, setOptimisticUserPrompts] = useState<OptimisticUserPrompt[]>([])
   const [optimisticProcessing, setOptimisticProcessing] = useState<OptimisticProcessingState | null>(null)
   const [focusEpoch, setFocusEpoch] = useState(0)
@@ -794,6 +795,11 @@ export function useKannaState(activeChatId: string | null): KannaState {
     ),
     [sidebarData, sidebarProjectGroups]
   )
+
+  const setPendingChat = useCallback((chatId: string | null) => {
+    pendingChatIdRef.current = chatId
+    setPendingChatId(chatId)
+  }, [])
 
   useEffect(() => socket.onStatus(setConnectionStatus), [socket])
 
@@ -1109,23 +1115,23 @@ export function useKannaState(activeChatId: string | null): KannaState {
     const exists = sidebarProjectGroups.some((group) => group.chats.some((chat) => chat.chatId === activeChatId))
     if (exists) {
       if (pendingChatId === activeChatId) {
-        setPendingChatId(null)
+        setPendingChat(null)
       }
       return
     }
-    if (pendingChatId === activeChatId) {
+    if (pendingChatIdRef.current === activeChatId) {
       return
     }
     navigate("/")
-  }, [activeChatId, chatReady, navigate, pendingChatId, sidebarProjectGroups, sidebarReady])
+  }, [activeChatId, chatReady, navigate, pendingChatId, setPendingChat, sidebarProjectGroups, sidebarReady])
 
   useEffect(() => {
     if (!chatSnapshot) return
     setSelectedProjectId(chatSnapshot.runtime.projectId)
     if (pendingChatId === chatSnapshot.runtime.chatId) {
-      setPendingChatId(null)
+      setPendingChat(null)
     }
-  }, [chatSnapshot, pendingChatId])
+  }, [chatSnapshot, pendingChatId, setPendingChat])
 
   useEffect(() => {
     if (!activeChatId || !sidebarReady) return
@@ -1377,11 +1383,11 @@ export function useKannaState(activeChatId: string | null): KannaState {
     const result = await socket.command<{ chatId: string }>({ type: "chat.create", projectId, taskId })
     chatPreferences.initializeComposerForChat(result.chatId, { sourceState: sourceComposerState })
     setSelectedProjectId(projectId)
-    setPendingChatId(result.chatId)
+    setPendingChat(result.chatId)
     navigate(`/chat/${result.chatId}`)
     setSidebarOpen(false)
     setCommandError(null)
-  }, [activeChatId, navigate, socket])
+  }, [activeChatId, navigate, setPendingChat, socket])
 
   const resolveProjectIdForStartChat = useCallback(async (intent: StartChatIntent): Promise<{ projectId: string; localPath?: string }> => {
     if (intent.kind === "project_id") {
@@ -1444,14 +1450,14 @@ export function useKannaState(activeChatId: string | null): KannaState {
       chatPreferences.initializeComposerForChat(result.chatId, {
         sourceState: chatPreferences.getComposerState(chat.chatId),
       })
-      setPendingChatId(result.chatId)
+      setPendingChat(result.chatId)
       navigate(`/chat/${result.chatId}`)
       setSidebarOpen(false)
       setCommandError(null)
     } catch (error) {
       setCommandError(error instanceof Error ? error.message : String(error))
     }
-  }, [navigate, socket])
+  }, [navigate, setPendingChat, socket])
 
   const handleOpenLocalProject = useCallback(async (localPath: string) => {
     await startChatFromIntent({ kind: "local_path", localPath })
@@ -1477,7 +1483,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
         sourceState: sourceComposerState,
       })
       setSelectedProjectId(result.projectId)
-      setPendingChatId(result.chatId)
+      setPendingChat(result.chatId)
       navigate(`/chat/${result.chatId}`)
       setCommandError(null)
       setSidebarOpen(false)
@@ -1486,7 +1492,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     } finally {
       setStartingLocalPath(null)
     }
-  }, [activeChatId, navigate, socket])
+  }, [activeChatId, navigate, setPendingChat, socket])
 
   const handleCheckForUpdates = useCallback(async (options?: { force?: boolean }) => {
     try {
@@ -1666,7 +1672,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
           result.chatId,
           composerStateFromSendOptions(options) ?? chatPreferences.getComposerState(NEW_CHAT_COMPOSER_ID)
         )
-        setPendingChatId(result.chatId)
+        setPendingChat(result.chatId)
         navigate(`/chat/${result.chatId}`)
       }
       setCommandError(null)
@@ -1680,7 +1686,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
       setCommandError(error instanceof Error ? error.message : String(error))
       throw error
     }
-  }, [activeChatId, fallbackLocalProjectPath, isProcessing, navigate, optimisticUserPrompts, selectedProjectId, serverTranscriptEntries, sidebarProjectGroups, socket])
+  }, [activeChatId, fallbackLocalProjectPath, isProcessing, navigate, optimisticUserPrompts, selectedProjectId, serverTranscriptEntries, setPendingChat, sidebarProjectGroups, socket])
 
   const handleSteerQueuedMessage = useCallback(async (queuedMessageId: string) => {
     if (!activeChatId) return
@@ -1797,15 +1803,15 @@ export function useKannaState(activeChatId: string | null): KannaState {
 
   const handleOpenArchivedChat = useCallback(async (chatId: string) => {
     try {
-      setPendingChatId(chatId)
+      setPendingChat(chatId)
       await socket.command({ type: "chat.unarchive", chatId })
       navigate(`/chat/${chatId}`)
       setCommandError(null)
     } catch (error) {
-      setPendingChatId(null)
+      setPendingChat(null)
       setCommandError(error instanceof Error ? error.message : String(error))
     }
-  }, [navigate, socket])
+  }, [navigate, setPendingChat, socket])
 
   const handleHideProject = useCallback(async (projectId: string) => {
     try {

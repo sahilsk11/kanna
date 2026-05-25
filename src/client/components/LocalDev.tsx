@@ -1,4 +1,4 @@
-import { useMemo, useState, type ComponentType, type FormEvent, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type ComponentType, type FormEvent, type ReactNode } from "react"
 import {
   ArrowLeftRight,
   Check,
@@ -170,17 +170,25 @@ function ProjectCard({
 
 function TaskCreateForm({
   commandError,
+  defaultLocalPath,
   onCreateTask,
 }: {
   commandError: string | null
+  defaultLocalPath: string
   onCreateTask: (task: { localPath: string; title: string }) => Promise<void>
 }) {
   const [title, setTitle] = useState("")
-  const [localPath, setLocalPath] = useState("")
+  const [localPath, setLocalPath] = useState(defaultLocalPath)
   const [submitting, setSubmitting] = useState(false)
+  const editedLocalPathRef = useRef(false)
   const trimmedTitle = title.trim()
   const trimmedPath = localPath.trim()
   const canSubmit = Boolean(trimmedTitle && trimmedPath && !submitting)
+
+  useEffect(() => {
+    if (editedLocalPathRef.current || localPath) return
+    setLocalPath(defaultLocalPath)
+  }, [defaultLocalPath, localPath])
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -189,21 +197,14 @@ function TaskCreateForm({
       setSubmitting(true)
       await onCreateTask({ title: trimmedTitle, localPath: trimmedPath })
       setTitle("")
-      setLocalPath("")
     } finally {
       setSubmitting(false)
     }
   }
 
   return (
-    <div className="w-full max-w-2xl px-6 pb-10">
-      <form onSubmit={(event) => void handleSubmit(event)} className="border-b border-border pb-6">
-        <div className="mb-5">
-          <h2 className="text-base font-medium text-foreground">Create Task</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Tasks group related sessions while each session still runs in its own workspace path.
-          </p>
-        </div>
+    <div className="flex w-full flex-1 items-start justify-center px-6 pb-10 pt-10">
+      <form onSubmit={(event) => void handleSubmit(event)} className="w-full max-w-xl">
         <div className="grid gap-4">
           <label className="grid gap-2">
             <span className="text-sm font-medium text-foreground">Task name</span>
@@ -217,8 +218,11 @@ function TaskCreateForm({
             <span className="text-sm font-medium text-foreground">Default path</span>
             <Input
               value={localPath}
-              onChange={(event) => setLocalPath(event.target.value)}
-              placeholder="~/Projects/my-app"
+              onChange={(event) => {
+                editedLocalPathRef.current = true
+                setLocalPath(event.target.value)
+              }}
+              placeholder={defaultLocalPath}
             />
           </label>
         </div>
@@ -339,14 +343,19 @@ export function LocalDev({
       ) : (
         <>
           <PageHeader
+            narrow={isTaskGrouping}
             title={isTaskGrouping ? "Tasks" : (snapshot?.machine.displayName ?? "Local Projects")}
             subtitle={isTaskGrouping
-              ? "Create a task to group related sessions across one or more workspaces."
+              ? undefined
               : `${APP_NAME} is connected, choose a project below to get started.`}
           />
 
           {isTaskGrouping ? (
-            <TaskCreateForm commandError={commandError} onCreateTask={onCreateTask} />
+            <TaskCreateForm
+              commandError={commandError}
+              defaultLocalPath={snapshot?.defaultProjectPath ?? ""}
+              onCreateTask={onCreateTask}
+            />
           ) : (
             <div className="w-full px-6 mb-10">
             <div className="flex items-baseline justify-between mb-3">
