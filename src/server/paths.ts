@@ -3,7 +3,7 @@ import { homedir } from "node:os"
 import path from "node:path"
 
 export function getDefaultProjectPath() {
-  return resolveLocalPath(process.env.KANNA_DEFAULT_PROJECT_PATH ?? "~/projects")
+  return resolveLocalPath(process.env.KANNA_DEFAULT_PROJECT_PATH?.trim() || "~/projects")
 }
 
 export function resolveLocalPath(localPath: string) {
