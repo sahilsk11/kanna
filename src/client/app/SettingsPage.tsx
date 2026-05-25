@@ -37,6 +37,7 @@ import {
   type SkillSearchResult,
   type SkillSearchSnapshot,
   type SkillUninstallResult,
+  type SessionGroupingPreference,
   type UpdateSnapshot,
 } from "../../shared/types"
 import { markdownComponents } from "../components/messages/shared"
@@ -125,6 +126,11 @@ const chatSoundPreferenceOptions: { value: ChatSoundPreference; label: string }[
   { value: "never", label: "Never" },
   { value: "unfocused", label: "When Unfocused" },
   { value: "always", label: "Always" },
+]
+
+const sessionGroupingOptions: { value: SessionGroupingPreference; label: string }[] = [
+  { value: "default", label: "Default" },
+  { value: "projects", label: "Projects" },
 ]
 
 const analyticsOptions = [
@@ -831,6 +837,7 @@ export function SettingsPage() {
   const setChatSoundId = useChatSoundPreferencesStore((store) => store.setChatSoundId)
   const keybindings = state.keybindings
   const appSettings = state.appSettings
+  const sessionGrouping = appSettings?.sessionGrouping ?? "default"
   const llmProvider = state.llmProvider
   const defaultProvider = useChatPreferencesStore((store) => store.defaultProvider)
   const providerDefaults = useChatPreferencesStore((store) => store.providerDefaults)
@@ -1022,6 +1029,12 @@ export function SettingsPage() {
     setTheme(nextTheme)
     void handleWriteAppSettings({ theme: nextTheme }).catch((error) => {
       setAppSettingsError(error instanceof Error ? error.message : "Unable to save theme settings.")
+    })
+  }
+
+  function handleSessionGroupingChange(nextValue: SessionGroupingPreference) {
+    void handleWriteAppSettings({ sessionGrouping: nextValue }).catch((error) => {
+      setAppSettingsError(error instanceof Error ? error.message : "Unable to save session grouping settings.")
     })
   }
 
@@ -1421,6 +1434,29 @@ export function SettingsPage() {
                           options={themeOptions}
                           size="sm"
                         />
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Session Grouping"
+                        description="Choose how sessions are grouped in the sidebar"
+                      >
+                        <Select
+                          value={sessionGrouping}
+                          onValueChange={(value) => handleSessionGroupingChange(value as SessionGroupingPreference)}
+                        >
+                          <SelectTrigger className="min-w-[180px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              {sessionGroupingOptions.map((option) => (
+                                <SelectItem key={option.value} value={option.value}>
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
                       </SettingsRow>
 
                       <SettingsRow

@@ -23,6 +23,7 @@ function expectedSettingsSnapshot(filePath: string, overrides: Partial<AppSettin
     analyticsEnabled: true,
     browserSettingsMigrated: false,
     theme: "system",
+    sessionGrouping: "default",
     chatSoundPreference: "always",
     chatSoundId: "funk",
     terminal: {
@@ -128,6 +129,7 @@ describe("AppSettingsManager", () => {
 
     const snapshot = await manager.writePatch({
       theme: "dark",
+      sessionGrouping: "projects",
       chatSoundId: "glass",
       terminal: { scrollbackLines: 2_500 },
       editor: { preset: "vscode" },
@@ -140,6 +142,7 @@ describe("AppSettingsManager", () => {
     const nextPayload = JSON.parse(await readFile(filePath, "utf8")) as {
       analyticsUserId: string
       theme: string
+      sessionGrouping: string
       chatSoundId: string
       terminal: { scrollbackLines: number; minColumnWidth: number }
       editor: { preset: string; commandTemplate: string }
@@ -147,6 +150,7 @@ describe("AppSettingsManager", () => {
     }
 
     expect(snapshot.theme).toBe("dark")
+    expect(snapshot.sessionGrouping).toBe("projects")
     expect(snapshot.chatSoundId).toBe("glass")
     expect(snapshot.terminal.scrollbackLines).toBe(2_500)
     expect(snapshot.terminal.minColumnWidth).toBe(450)
@@ -155,6 +159,7 @@ describe("AppSettingsManager", () => {
     expect(snapshot.providerDefaults.codex.modelOptions.fastMode).toBe(true)
     expect(nextPayload.analyticsUserId).toBe(initialPayload.analyticsUserId)
     expect(nextPayload.theme).toBe("dark")
+    expect(nextPayload.sessionGrouping).toBe("projects")
     expect(nextPayload.chatSoundId).toBe("glass")
 
     manager.dispose()
