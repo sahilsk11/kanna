@@ -7,11 +7,14 @@ import { getSettingsFilePath, LOG_PREFIX } from "../shared/branding"
 import {
   DEFAULT_CLAUDE_MODEL_OPTIONS,
   DEFAULT_CODEX_MODEL_OPTIONS,
+  DEFAULT_HERMES_MODEL,
+  DEFAULT_HERMES_MODEL_OPTIONS,
   isClaudeReasoningEffort,
   isCodexReasoningEffort,
   normalizeClaudeContextWindow,
   normalizeClaudeModelId,
   normalizeCodexModelId,
+  normalizeHermesModelId,
   supportsClaudeMaxReasoningEffort,
   type AppSettingsPatch,
   type AppSettingsSnapshot,
@@ -23,6 +26,7 @@ import {
   type CodexModelOptions,
   type DefaultProviderPreference,
   type EditorPreset,
+  type HermesModelOptions,
   type ProviderPreference,
   type SessionGroupingPreference,
 } from "../shared/types"
@@ -47,6 +51,7 @@ interface AppSettingsFile {
   providerDefaults?: {
     claude?: Partial<ProviderPreference<Partial<ClaudeModelOptions>>> & { effort?: unknown }
     codex?: Partial<ProviderPreference<Partial<CodexModelOptions>>> & { effort?: unknown }
+    hermes?: Partial<ProviderPreference<Partial<HermesModelOptions>>>
   }
 }
 
@@ -110,6 +115,11 @@ function createDefaultProviderDefaults(): ChatProviderPreferences {
       modelOptions: { ...DEFAULT_CODEX_MODEL_OPTIONS },
       planMode: false,
     },
+    hermes: {
+      model: DEFAULT_HERMES_MODEL,
+      modelOptions: { ...DEFAULT_HERMES_MODEL_OPTIONS },
+      planMode: false,
+    },
   }
 }
 
@@ -149,7 +159,7 @@ function normalizeChatSoundId(value: unknown): ChatSoundId {
 }
 
 function normalizeDefaultProvider(value: unknown): DefaultProviderPreference {
-  return value === "claude" || value === "codex" || value === "last_used" ? value : "last_used"
+  return value === "claude" || value === "codex" || value === "hermes" || value === "last_used" ? value : "last_used"
 }
 
 function normalizeEditorPreset(value: unknown): EditorPreset {
@@ -210,11 +220,23 @@ function normalizeCodexPreference(value?: {
   }
 }
 
+function normalizeHermesPreference(value?: {
+  model?: unknown
+  planMode?: unknown
+}): ProviderPreference<HermesModelOptions> {
+  return {
+    model: normalizeHermesModelId(typeof value?.model === "string" ? value.model : undefined),
+    modelOptions: { ...DEFAULT_HERMES_MODEL_OPTIONS },
+    planMode: value?.planMode === true,
+  }
+}
+
 function normalizeProviderDefaults(value: AppSettingsFile["providerDefaults"] | undefined): ChatProviderPreferences {
   const defaults = createDefaultProviderDefaults()
   return {
     claude: normalizeClaudePreference(value?.claude ?? defaults.claude),
     codex: normalizeCodexPreference(value?.codex ?? defaults.codex),
+    hermes: normalizeHermesPreference(value?.hermes ?? defaults.hermes),
   }
 }
 
@@ -356,6 +378,14 @@ function applyPatch(state: AppSettingsState, patch: AppSettingsPatch): AppSettin
         modelOptions: {
           ...state.providerDefaults.codex.modelOptions,
           ...patch.providerDefaults?.codex?.modelOptions,
+        },
+      },
+      hermes: {
+        ...state.providerDefaults.hermes,
+        ...patch.providerDefaults?.hermes,
+        modelOptions: {
+          ...state.providerDefaults.hermes.modelOptions,
+          ...patch.providerDefaults?.hermes?.modelOptions,
         },
       },
     },

@@ -20,6 +20,7 @@ import { NoopAnalyticsReporter } from "./analytics"
 import { CodexAppServerManager } from "./codex-app-server"
 import { type GenerateChatTitleResult, generateTitleForChatDetailed } from "./generate-title"
 import type { HarnessEvent, HarnessToolRequest, HarnessTurn } from "./harness-types"
+import { HermesAcpManager } from "./hermes-acp"
 import {
   codexServiceTierFromModelOptions,
   getServerProviderCatalog,
@@ -106,6 +107,7 @@ interface AgentCoordinatorArgs {
   onStateChange: (chatId?: string, options?: { immediate?: boolean }) => void
   analytics?: AnalyticsReporter
   codexManager?: CodexAppServerManager
+  hermesManager?: HermesAcpManager
   generateTitle?: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
   startClaudeSession?: (args: {
     localPath: string
@@ -685,6 +687,7 @@ export class AgentCoordinator {
   private readonly onStateChange: (chatId?: string, options?: { immediate?: boolean }) => void
   private readonly analytics: AnalyticsReporter
   private readonly codexManager: CodexAppServerManager
+  private readonly hermesManager: HermesAcpManager
   private readonly generateTitle: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
   private readonly startClaudeSessionFn: NonNullable<AgentCoordinatorArgs["startClaudeSession"]>
   private reportBackgroundError: ((message: string) => void) | null = null
@@ -697,6 +700,7 @@ export class AgentCoordinator {
     this.onStateChange = args.onStateChange
     this.analytics = args.analytics ?? NoopAnalyticsReporter
     this.codexManager = args.codexManager ?? new CodexAppServerManager()
+    this.hermesManager = args.hermesManager ?? new HermesAcpManager()
     this.generateTitle = args.generateTitle ?? generateTitleForChatDetailed
     this.startClaudeSessionFn = args.startClaudeSession ?? startClaudeSession
   }
@@ -758,7 +762,24 @@ export class AgentCoordinator {
       claudeSession.session.close()
       this.claudeSessions.delete(chatId)
     }
+    this.hermesManager.stopSession(chatId)
     this.emitStateChange(chatId)
+  }
+
+  async stopAll() {
+    for (const chatId of [...this.drainingStreams.keys()]) {
+      await this.stopDraining(chatId)
+    }
+    for (const chatId of [...this.activeTurns.keys()]) {
+      await this.cancel(chatId, { reason: "server_shutdown" })
+    }
+    for (const [chatId, session] of this.claudeSessions.entries()) {
+      session.session.close()
+      this.claudeSessions.delete(chatId)
+    }
+    this.codexManager.stopAll()
+    this.hermesManager.stopAll()
+    this.emitStateChange()
   }
 
   private resolveProvider(options: SendMessageOptions, currentProvider: AgentProvider | null) {
@@ -776,6 +797,15 @@ export class AgentCoordinator {
         effort: modelOptions.reasoningEffort,
         serviceTier: undefined,
         planMode: catalog.supportsPlanMode ? Boolean(options.planMode) : false,
+      }
+    }
+
+    if (provider === "hermes") {
+      return {
+        model: normalizeServerModel(provider, options.model),
+        effort: undefined,
+        serviceTier: undefined,
+        planMode: false,
       }
     }
 
@@ -952,7 +982,7 @@ export class AgentCoordinator {
         provider: args.provider,
         model: args.model,
       })
-    } else {
+    } else if (args.provider === "codex") {
       logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
         chatId: args.chatId,
         provider: args.provider,
@@ -982,6 +1012,36 @@ export class AgentCoordinator {
         serviceTier: args.serviceTier,
         planMode: args.planMode,
         onToolRequest,
+      })
+      logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
+        chatId: args.chatId,
+        provider: args.provider,
+        model: args.model,
+      })
+    } else {
+      logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
+        chatId: args.chatId,
+        provider: args.provider,
+        model: args.model,
+      })
+      const sessionToken = await this.hermesManager.startSession({
+        chatId: args.chatId,
+        cwd: project.localPath,
+        sessionToken: chat.sessionToken,
+        pendingForkSessionToken: chat.pendingForkSessionToken,
+      })
+      if (chat.pendingForkSessionToken && sessionToken) {
+        await this.store.setPendingForkSessionToken(args.chatId, null)
+      }
+      logSendToStartingProfile(args.profile, "start_turn.session_ready", {
+        chatId: args.chatId,
+        provider: args.provider,
+        model: args.model,
+      })
+      turn = await this.hermesManager.startTurn({
+        chatId: args.chatId,
+        content: buildPromptText(args.content, args.attachments),
+        model: args.model,
       })
       logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
         chatId: args.chatId,

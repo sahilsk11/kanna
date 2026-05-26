@@ -47,4 +47,29 @@ describe("ChatPreferenceControls", () => {
     expect(html).toContain("1M")
     expect(html).toContain("Plan Mode")
   })
+
+  test("renders Hermes without provider-specific option controls", () => {
+    const html = renderToStaticMarkup(
+      <ChatPreferenceControls
+        availableProviders={PROVIDERS}
+        selectedProvider="hermes"
+        model="hermes-configured-default"
+        modelOptions={{}}
+        onProviderChange={() => {}}
+        onModelChange={() => {}}
+        onModelOptionChange={() => {}}
+        planMode
+        onPlanModeChange={() => {}}
+        includePlanMode
+      />
+    )
+
+    expect(html).toContain("Hermes")
+    expect(html).toContain("Configured Default")
+    expect(html).not.toContain("Fast Mode")
+    expect(html).not.toContain("Plan Mode")
+    expect(html).not.toContain("Full Access")
+    expect(html).not.toContain("Max")
+    expect(html).not.toContain("1M")
+  })
 })

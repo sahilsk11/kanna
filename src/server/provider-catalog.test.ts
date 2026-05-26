@@ -3,9 +3,10 @@ import {
   codexServiceTierFromModelOptions,
   normalizeClaudeModelOptions,
   normalizeCodexModelOptions,
+  normalizeHermesModelOptions,
   normalizeServerModel,
 } from "./provider-catalog"
-import { resolveClaudeApiModelId } from "../shared/types"
+import { DEFAULT_HERMES_MODEL, resolveClaudeApiModelId } from "../shared/types"
 
 describe("provider catalog normalization", () => {
   test("maps legacy Claude effort into shared model options", () => {
@@ -60,6 +61,11 @@ describe("provider catalog normalization", () => {
     expect(normalizeServerModel("codex")).toBe("gpt-5.5")
     expect(normalizeServerModel("claude", "opus")).toBe("claude-opus-4-7")
     expect(normalizeServerModel("codex", "gpt-5-codex")).toBe("gpt-5.3-codex")
+    expect(normalizeServerModel("hermes", "gpt-5.5")).toBe(DEFAULT_HERMES_MODEL)
+  })
+
+  test("normalizes Hermes to empty configured-default model options", () => {
+    expect(normalizeHermesModelOptions()).toEqual({})
   })
 
   test("resolves Claude API model ids for 1m context window", () => {
