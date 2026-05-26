@@ -52,6 +52,11 @@ function expectedSettingsSnapshot(filePath: string, overrides: Partial<AppSettin
         },
         planMode: false,
       },
+      hermes: {
+        model: "hermes-configured-default",
+        modelOptions: {},
+        planMode: false,
+      },
     },
     warning: null,
     filePathDisplay: filePath,
@@ -163,5 +168,29 @@ describe("AppSettingsManager", () => {
     expect(nextPayload.chatSoundId).toBe("glass")
 
     manager.dispose()
+  })
+
+  test("normalizes Hermes provider defaults and default provider", async () => {
+    const filePath = await createTempFilePath()
+    await writeFile(filePath, JSON.stringify({
+      defaultProvider: "hermes",
+      providerDefaults: {
+        hermes: {
+          model: "gpt-5.5",
+          modelOptions: { reasoningEffort: "xhigh", fastMode: true },
+          planMode: true,
+        },
+      },
+    }), "utf8")
+
+    const snapshot = await readAppSettingsSnapshot(filePath)
+
+    expect(snapshot.defaultProvider).toBe("hermes")
+    expect(snapshot.providerDefaults.hermes).toEqual({
+      model: "hermes-configured-default",
+      modelOptions: {},
+      planMode: true,
+    })
+    expect(snapshot.providerDefaults.codex).toEqual(expectedSettingsSnapshot(filePath).providerDefaults.codex)
   })
 })

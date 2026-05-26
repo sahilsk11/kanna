@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { PROVIDERS } from "../../../shared/types"
+import { useChatPreferencesStore } from "../../stores/chatPreferencesStore"
 import { ChatInput, getClipboardImageFiles, trimTrailingPastedNewlines, willExceedAttachmentLimit } from "./ChatInput"
 
 function createClipboardItem(args: {
@@ -135,5 +136,21 @@ describe("ChatInput", () => {
     expect(html).toContain('type="file"')
     expect(html).toContain("absolute inset-0 cursor-pointer opacity-0")
     expect(html).not.toContain('type="file" multiple="" class="hidden"')
+  })
+
+  test("uses Hermes defaults for a locked Hermes chat", () => {
+    useChatPreferencesStore.setState(useChatPreferencesStore.getInitialState())
+
+    const html = renderToStaticMarkup(createElement(ChatInput, {
+      onSubmit: async () => undefined,
+      disabled: false,
+      canCancel: false,
+      activeProvider: "hermes",
+      availableProviders: PROVIDERS,
+    }))
+
+    expect(html).toContain("Hermes")
+    expect(html).toContain("Configured Default")
+    expect(html).not.toContain("GPT-5.5")
   })
 })

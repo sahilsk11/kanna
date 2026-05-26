@@ -67,6 +67,11 @@ describe("migrateChatPreferencesState", () => {
           modelOptions: { reasoningEffort: "minimal", fastMode: true },
           planMode: false,
         },
+        hermes: {
+          model: "hermes-configured-default",
+          modelOptions: {},
+          planMode: false,
+        },
       },
       chatStates: {},
       legacyComposerState: {
@@ -170,6 +175,45 @@ describe("migrateChatPreferencesState", () => {
       planMode: true,
     })
   })
+
+  test("normalizes Hermes defaults and composer state without Codex options", () => {
+    const migrated = migrateChatPreferencesState({
+      defaultProvider: "hermes",
+      providerDefaults: {
+        hermes: {
+          model: "gpt-5.5",
+          modelOptions: { reasoningEffort: "xhigh", fastMode: true },
+          planMode: true,
+        },
+      },
+      chatStates: {
+        chatA: {
+          provider: "hermes",
+          model: "default",
+          modelOptions: { fastMode: true },
+          planMode: false,
+        },
+      },
+    })
+
+    expect(migrated.defaultProvider).toBe("hermes")
+    expect(migrated.providerDefaults.hermes).toEqual({
+      model: "hermes-configured-default",
+      modelOptions: {},
+      planMode: true,
+    })
+    expect(migrated.chatStates.chatA).toEqual({
+      provider: "hermes",
+      model: "hermes-configured-default",
+      modelOptions: {},
+      planMode: false,
+    })
+    expect(migrated.providerDefaults.codex).toEqual({
+      model: "gpt-5.5",
+      modelOptions: { reasoningEffort: "high", fastMode: false },
+      planMode: false,
+    })
+  })
 })
 
 describe("chat preference store", () => {
@@ -177,6 +221,14 @@ describe("chat preference store", () => {
     expect(INITIAL_STATE.providerDefaults.codex).toEqual({
       model: "gpt-5.5",
       modelOptions: { reasoningEffort: "high", fastMode: false },
+      planMode: false,
+    })
+  })
+
+  test("starts with Hermes configured defaults", () => {
+    expect(INITIAL_STATE.providerDefaults.hermes).toEqual({
+      model: "hermes-configured-default",
+      modelOptions: {},
       planMode: false,
     })
   })
@@ -297,6 +349,30 @@ describe("chat preference store", () => {
       provider: "codex",
       model: "gpt-5.3-codex-spark",
       modelOptions: { reasoningEffort: "minimal", fastMode: true },
+      planMode: true,
+    })
+  })
+
+  test("initializeComposerForChat can use Hermes as the explicit default provider", () => {
+    useChatPreferencesStore.setState({
+      ...INITIAL_STATE,
+      defaultProvider: "hermes",
+      providerDefaults: {
+        ...INITIAL_STATE.providerDefaults,
+        hermes: {
+          model: "hermes-configured-default",
+          modelOptions: {},
+          planMode: true,
+        },
+      },
+    })
+
+    useChatPreferencesStore.getState().initializeComposerForChat("chat-a")
+
+    expect(useChatPreferencesStore.getState().getComposerState("chat-a")).toEqual({
+      provider: "hermes",
+      model: "hermes-configured-default",
+      modelOptions: {},
       planMode: true,
     })
   })

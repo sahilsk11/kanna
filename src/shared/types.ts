@@ -1,7 +1,7 @@
 export const STORE_VERSION = 2 as const
 export const PROTOCOL_VERSION = 1 as const
 
-export type AgentProvider = "claude" | "codex"
+export type AgentProvider = "claude" | "codex" | "hermes"
 export type LlmProviderKind = "openai" | "openrouter" | "custom"
 export type AppThemePreference = "light" | "dark" | "system"
 export type SessionGroupingPreference = "default" | "tasks"
@@ -11,6 +11,7 @@ export type DefaultProviderPreference = "last_used" | AgentProvider
 export type EditorPreset = "cursor" | "vscode" | "xcode" | "windsurf" | "custom"
 export const DEFAULT_OPENAI_SDK_MODEL = "gpt-5.4-mini"
 export const DEFAULT_OPENROUTER_SDK_MODEL = "moonshotai/kimi-k2.5:nitro"
+export const DEFAULT_HERMES_MODEL = "hermes-configured-default"
 
 export type AttachmentKind = "image" | "file"
 export type StandaloneTranscriptAttachmentMode = "metadata" | "bundle"
@@ -182,9 +183,12 @@ export interface CodexModelOptions {
   fastMode: boolean
 }
 
+export interface HermesModelOptions {}
+
 export interface ProviderModelOptionsByProvider {
   claude: ClaudeModelOptions
   codex: CodexModelOptions
+  hermes: HermesModelOptions
 }
 
 export interface ProviderPreference<TModelOptions> {
@@ -196,6 +200,7 @@ export interface ProviderPreference<TModelOptions> {
 export type ChatProviderPreferences = {
   claude: ProviderPreference<ClaudeModelOptions>
   codex: ProviderPreference<CodexModelOptions>
+  hermes: ProviderPreference<HermesModelOptions>
 }
 
 export type ModelOptions = Partial<{
@@ -211,6 +216,8 @@ export const DEFAULT_CODEX_MODEL_OPTIONS = {
   reasoningEffort: "high",
   fastMode: false,
 } as const satisfies CodexModelOptions
+
+export const DEFAULT_HERMES_MODEL_OPTIONS = {} as const satisfies HermesModelOptions
 
 export function isClaudeReasoningEffort(value: unknown): value is ClaudeReasoningEffort {
   return CLAUDE_REASONING_OPTIONS.some((option) => option.id === value)
@@ -284,6 +291,16 @@ export const PROVIDERS: ProviderCatalogEntry[] = [
     ],
     efforts: [],
   },
+  {
+    id: "hermes",
+    label: "Hermes",
+    defaultModel: DEFAULT_HERMES_MODEL,
+    supportsPlanMode: false,
+    models: [
+      { id: DEFAULT_HERMES_MODEL, label: "Configured Default", supportsEffort: false, aliases: ["default"] },
+    ],
+    efforts: [],
+  },
 ]
 
 export function getProviderCatalog(provider: AgentProvider): ProviderCatalogEntry {
@@ -318,6 +335,10 @@ export function normalizeClaudeModelId(modelId?: string, fallbackModelId = "clau
 
 export function normalizeCodexModelId(modelId?: string, fallbackModelId = "gpt-5.5"): string {
   return normalizeProviderModelId("codex", modelId, fallbackModelId)
+}
+
+export function normalizeHermesModelId(modelId?: string, fallbackModelId = DEFAULT_HERMES_MODEL): string {
+  return normalizeProviderModelId("hermes", modelId, fallbackModelId)
 }
 
 export function getProviderModelOption(provider: AgentProvider, modelId: string): ProviderModelOption | undefined {
@@ -471,6 +492,7 @@ export interface AppSettingsPatch {
   providerDefaults?: {
     claude?: Partial<ProviderPreference<ClaudeModelOptions>>
     codex?: Partial<ProviderPreference<CodexModelOptions>>
+    hermes?: Partial<ProviderPreference<HermesModelOptions>>
   }
 }
 

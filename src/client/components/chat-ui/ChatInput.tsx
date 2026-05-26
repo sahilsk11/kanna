@@ -155,19 +155,29 @@ function getEffectiveComposerState(
     return composerState
   }
 
-  return activeProvider === "claude"
-    ? {
-      provider: "claude",
-      model: providerDefaults.claude.model,
-      modelOptions: { ...providerDefaults.claude.modelOptions },
-      planMode: composerState.planMode,
-    }
-    : {
-      provider: "codex",
-      model: providerDefaults.codex.model,
-      modelOptions: { ...providerDefaults.codex.modelOptions },
-      planMode: composerState.planMode,
-    }
+  switch (activeProvider) {
+    case "claude":
+      return {
+        provider: "claude",
+        model: providerDefaults.claude.model,
+        modelOptions: { ...providerDefaults.claude.modelOptions },
+        planMode: composerState.planMode,
+      }
+    case "codex":
+      return {
+        provider: "codex",
+        model: providerDefaults.codex.model,
+        modelOptions: { ...providerDefaults.codex.modelOptions },
+        planMode: composerState.planMode,
+      }
+    case "hermes":
+      return {
+        provider: "hermes",
+        model: providerDefaults.hermes.model,
+        modelOptions: { ...providerDefaults.hermes.modelOptions },
+        planMode: composerState.planMode,
+      }
+  }
 }
 
 const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
@@ -521,8 +531,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     let modelOptions: ModelOptions
     if (providerPrefs.provider === "claude") {
       modelOptions = { claude: { ...providerPrefs.modelOptions } }
-    } else {
+    } else if (providerPrefs.provider === "codex") {
       modelOptions = { codex: { ...providerPrefs.modelOptions } }
+    } else {
+      modelOptions = { hermes: { ...providerPrefs.modelOptions } }
     }
     const submitOptions = {
       provider: selectedProvider,
@@ -794,7 +806,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   break
                 case "fastMode":
                   updateComposerState(
-                    (state) => state.provider === "claude"
+                    (state) => state.provider !== "codex"
                       ? state
                       : { ...state, modelOptions: { ...state.modelOptions, fastMode: change.fastMode } }
                   )

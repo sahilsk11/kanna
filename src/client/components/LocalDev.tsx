@@ -381,7 +381,7 @@ export function LocalDev({
             ) : (
               <InfoCard>
                 <p className="text-sm text-muted-foreground">
-                  No local projects discovered yet. Open one with Claude or Codex, or create a new project here.
+                  No local projects discovered yet. Open one with Claude, Codex, or Hermes, or create a new project here.
                 </p>
               </InfoCard>
             )}

@@ -92,7 +92,7 @@ const sidebarItems = [
     id: "providers",
     label: "Providers",
     icon: MessageSquareQuote,
-    subtitle: "Manage the default chat provider and saved model defaults for Claude Code and Codex.",
+    subtitle: "Manage the default chat provider and saved model defaults for each harness.",
   },
   {
     id: "keybindings",
@@ -1209,7 +1209,7 @@ export function SettingsPage() {
   const llmValidationDescription = (
     <>
       <span>
-        Use an OpenAI-compatible API for title and commit message generation before Claude and Codex. Stored in {llmProvider?.filePathDisplay ?? "the active llm-provider.json file"}.
+        Use an OpenAI-compatible API for title and commit message generation before agent harnesses. Stored in {llmProvider?.filePathDisplay ?? "the active llm-provider.json file"}.
       </span>
       <span
         className={cn(
@@ -1724,6 +1724,31 @@ export function SettingsPage() {
                           }}
                           planMode={providerDefaults.codex.planMode}
                           onPlanModeChange={(planMode) => handleProviderDefaultPlanModeChange("codex", planMode)}
+                          includePlanMode
+                          className="justify-start flex-wrap"
+                        />
+                      </div>
+                    </SettingsRow>
+
+                    <SettingsRow
+                      title="Hermes Defaults"
+                      description="Saved defaults when using Hermes."
+                      alignStart
+                    >
+                      <div className="max-w-[420px]">
+                        <ChatPreferenceControls
+                          availableProviders={PROVIDERS}
+                          selectedProvider="hermes"
+                          showProviderPicker={false}
+                          providerLocked
+                          model={providerDefaults.hermes.model}
+                          modelOptions={providerDefaults.hermes.modelOptions}
+                          onModelChange={(_, model) => {
+                            handleProviderDefaultModelChange("hermes", model)
+                          }}
+                          onModelOptionChange={() => {}}
+                          planMode={providerDefaults.hermes.planMode}
+                          onPlanModeChange={(planMode) => handleProviderDefaultPlanModeChange("hermes", planMode)}
                           includePlanMode
                           className="justify-start flex-wrap"
                         />

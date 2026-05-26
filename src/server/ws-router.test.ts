@@ -103,6 +103,11 @@ const DEFAULT_APP_SETTINGS_SNAPSHOT: AppSettingsSnapshot = {
       },
       planMode: false,
     },
+    hermes: {
+      model: "hermes-configured-default",
+      modelOptions: {},
+      planMode: false,
+    },
   },
   warning: null,
   filePathDisplay: "~/.kanna/data/settings.json",

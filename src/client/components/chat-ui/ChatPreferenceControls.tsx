@@ -10,6 +10,7 @@ import {
   type ClaudeReasoningEffort,
   type CodexModelOptions,
   type CodexReasoningEffort,
+  type HermesModelOptions,
   type ProviderCatalogEntry,
   supportsClaudeMaxReasoningEffort,
 } from "../../../shared/types"
@@ -49,6 +50,7 @@ function OpenAIIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
 export const PROVIDER_ICONS: Record<AgentProvider, IconComponent> = {
   claude: AnthropicIcon,
   codex: OpenAIIcon,
+  hermes: Box,
 }
 
 export function PopoverMenuItem({
@@ -145,7 +147,7 @@ interface ChatPreferenceControlsProps {
   providerLocked?: boolean
   showCodexCliRequirementHints?: boolean
   model: string
-  modelOptions: ClaudeModelOptions | CodexModelOptions
+  modelOptions: ClaudeModelOptions | CodexModelOptions | HermesModelOptions
   onProviderChange?: (provider: AgentProvider) => void
   onModelChange: (provider: AgentProvider, model: string) => void
   onModelOptionChange: (change: ModelOptionChange) => void
@@ -180,6 +182,11 @@ export function ChatPreferenceControls({
   const contextWindowOptions = providerConfig.models.find((candidate) => candidate.id === model)?.contextWindowOptions ?? []
   const selectedContextWindow = claudeModelOptions?.contextWindow ?? CLAUDE_CONTEXT_WINDOW_OPTIONS[0].id
   const ContextWindowIcon = selectedContextWindow === "1m" ? SquareMenu : SquareMinus
+  const selectedEffortLabel = selectedProvider === "claude" && claudeModelOptions
+    ? CLAUDE_REASONING_OPTIONS.find((effort) => effort.id === claudeModelOptions.reasoningEffort)?.label ?? claudeModelOptions.reasoningEffort
+    : selectedProvider === "codex" && codexModelOptions
+      ? CODEX_REASONING_OPTIONS.find((effort) => effort.id === codexModelOptions.reasoningEffort)?.label ?? codexModelOptions.reasoningEffort
+      : null
 
   return (
     <div className={cn("flex md:justify-center items-center gap-0.5", className)}>
@@ -247,47 +254,47 @@ export function ChatPreferenceControls({
         })}
       </InputPopover>
 
-      <InputPopover
-        trigger={(
-          <>
-            <Brain className="h-3.5 w-3.5" />
-            <span>{
-              selectedProvider === "claude"
-                ? CLAUDE_REASONING_OPTIONS.find((effort) => effort.id === modelOptions.reasoningEffort)?.label ?? modelOptions.reasoningEffort
-                : CODEX_REASONING_OPTIONS.find((effort) => effort.id === modelOptions.reasoningEffort)?.label ?? modelOptions.reasoningEffort
-            }</span>
-          </>
-        )}
-      >
-        {(close) => (
-          selectedProvider === "claude"
-            ? CLAUDE_REASONING_OPTIONS.map((effort) => (
-              <PopoverMenuItem
-                key={effort.id}
-                onClick={() => {
-                  onModelOptionChange({ type: "claudeReasoningEffort", effort: effort.id })
-                  close()
-                }}
-                selected={modelOptions.reasoningEffort === effort.id}
-                icon={<Brain className="h-4 w-4 text-muted-foreground" />}
-                label={effort.label}
-                disabled={effort.id === "max" && !supportsClaudeMaxReasoningEffort(model)}
-              />
-            ))
-            : CODEX_REASONING_OPTIONS.map((effort) => (
-              <PopoverMenuItem
-                key={effort.id}
-                onClick={() => {
-                  onModelOptionChange({ type: "codexReasoningEffort", effort: effort.id })
-                  close()
-                }}
-                selected={modelOptions.reasoningEffort === effort.id}
-                icon={<Brain className="h-4 w-4 text-muted-foreground" />}
-                label={effort.label}
-              />
-            ))
-        )}
-      </InputPopover>
+      {selectedEffortLabel ? (
+        <InputPopover
+          trigger={(
+            <>
+              <Brain className="h-3.5 w-3.5" />
+              <span>{selectedEffortLabel}</span>
+            </>
+          )}
+        >
+          {(close) => (
+            selectedProvider === "claude" && claudeModelOptions
+              ? CLAUDE_REASONING_OPTIONS.map((effort) => (
+                <PopoverMenuItem
+                  key={effort.id}
+                  onClick={() => {
+                    onModelOptionChange({ type: "claudeReasoningEffort", effort: effort.id })
+                    close()
+                  }}
+                  selected={claudeModelOptions.reasoningEffort === effort.id}
+                  icon={<Brain className="h-4 w-4 text-muted-foreground" />}
+                  label={effort.label}
+                  disabled={effort.id === "max" && !supportsClaudeMaxReasoningEffort(model)}
+                />
+              ))
+              : codexModelOptions
+                ? CODEX_REASONING_OPTIONS.map((effort) => (
+                  <PopoverMenuItem
+                    key={effort.id}
+                    onClick={() => {
+                      onModelOptionChange({ type: "codexReasoningEffort", effort: effort.id })
+                      close()
+                    }}
+                    selected={codexModelOptions.reasoningEffort === effort.id}
+                    icon={<Brain className="h-4 w-4 text-muted-foreground" />}
+                    label={effort.label}
+                  />
+                ))
+                : null
+          )}
+        </InputPopover>
+      ) : null}
 
       {selectedProvider === "claude" && contextWindowOptions.length > 1 ? (
         <InputPopover

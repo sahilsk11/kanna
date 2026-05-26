@@ -1,10 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import {
   ClaudeProjectDiscoveryAdapter,
   CodexProjectDiscoveryAdapter,
+  HermesProjectDiscoveryAdapter,
   discoverProjects,
   type ProjectDiscoveryAdapter,
 } from "./discovery"
@@ -157,6 +159,86 @@ describe("project discovery", () => {
     expect(projects.find((project) => project.localPath === cliProjectDir)?.modifiedAt).toBe(
       Date.parse("2026-03-17T03:42:25.751Z")
     )
+  })
+
+  test("Hermes adapter reads ACP project cwd metadata from state.db", () => {
+    const homeDir = makeTempDir()
+    const hermesDir = path.join(homeDir, ".hermes")
+    const projectDir = path.join(homeDir, "workspace", "hermes-project")
+    const missingProjectDir = path.join(homeDir, "workspace", "missing-hermes-project")
+    mkdirSync(hermesDir, { recursive: true })
+    mkdirSync(projectDir, { recursive: true })
+
+    const db = new Database(path.join(hermesDir, "state.db"))
+    try {
+      db.exec(`
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          source TEXT NOT NULL,
+          model_config TEXT,
+          started_at REAL NOT NULL,
+          title TEXT,
+          message_count INTEGER DEFAULT 0
+        );
+        CREATE TABLE messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT,
+          timestamp REAL NOT NULL
+        );
+      `)
+      db.query(`
+        INSERT INTO sessions (id, source, model_config, started_at, title, message_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        "hermes-live",
+        "acp",
+        JSON.stringify({ cwd: projectDir }),
+        1_779_750_000,
+        "Persisted Hermes Title",
+        2,
+      )
+      db.query(`
+        INSERT INTO sessions (id, source, model_config, started_at, title, message_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        "hermes-missing",
+        "acp",
+        JSON.stringify({ cwd: missingProjectDir }),
+        1_779_751_000,
+        "Missing Project",
+        1,
+      )
+      db.query(`
+        INSERT INTO sessions (id, source, model_config, started_at, title, message_count)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        "hermes-cli",
+        "cli",
+        JSON.stringify({ cwd: projectDir }),
+        1_779_752_000,
+        "CLI Project",
+        1,
+      )
+      db.query(`
+        INSERT INTO messages (session_id, role, content, timestamp)
+        VALUES (?, ?, ?, ?)
+      `).run("hermes-live", "user", "hello", 1_779_750_500)
+    } finally {
+      db.close()
+    }
+
+    const projects = new HermesProjectDiscoveryAdapter().scan(homeDir)
+
+    expect(projects).toEqual([
+      {
+        provider: "hermes",
+        localPath: projectDir,
+        title: "Persisted Hermes Title",
+        modifiedAt: 1_779_750_500_000,
+      },
+    ])
   })
 
   test("discoverProjects de-dupes provider results by normalized path and keeps the newest timestamp", () => {
