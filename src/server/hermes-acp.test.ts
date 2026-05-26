@@ -87,6 +87,53 @@ describe("HermesAcpManager", () => {
     })
   })
 
+  test("reinitializes existing context when no Hermes session token was cached", async () => {
+    const processes: FakeHermesProcess[] = []
+    const manager = new HermesAcpManager({
+      spawnProcess: () => {
+        const process = new FakeHermesProcess((message, child) => {
+          if (message.method === "initialize") {
+            child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } })
+          } else if (message.method === "session/resume") {
+            child.writeAgentMessage({
+              jsonrpc: "2.0",
+              id: message.id,
+              error: { code: -32000, message: "missing session" },
+            })
+          } else if (message.method === "session/new") {
+            child.writeAgentMessage({
+              jsonrpc: "2.0",
+              id: message.id,
+              result: { sessionId: "hermes-session-recovered" },
+            })
+          }
+        })
+        processes.push(process)
+        return process as never
+      },
+    })
+
+    await expect(manager.startSession({
+      chatId: "chat-1",
+      cwd: "/tmp/project",
+      sessionToken: "stale-hermes-session",
+    })).rejects.toThrow("missing session")
+
+    const recoveredToken = await manager.startSession({
+      chatId: "chat-1",
+      cwd: "/tmp/project",
+      sessionToken: null,
+    })
+
+    expect(recoveredToken).toBe("hermes-session-recovered")
+    expect(processes).toHaveLength(2)
+    expect(processes[0].killed).toBe(true)
+    expect(processes[1].messages.map((message: any) => message.method)).toEqual([
+      "initialize",
+      "session/new",
+    ])
+  })
+
   test("streams assistant text and final result from session updates", async () => {
     const process = new FakeHermesProcess((message, child) => {
       if (message.method === "initialize") {

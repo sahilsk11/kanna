@@ -430,8 +430,8 @@ export class HermesAcpManager {
 
   async startSession(args: StartHermesSessionArgs): Promise<string | undefined> {
     const existing = this.sessions.get(args.chatId)
-    if (existing && !existing.closed && existing.cwd === args.cwd && !args.pendingForkSessionToken) {
-      return existing.sessionToken ?? undefined
+    if (existing && !existing.closed && existing.cwd === args.cwd && !args.pendingForkSessionToken && existing.sessionToken) {
+      return existing.sessionToken
     }
 
     if (existing) {
