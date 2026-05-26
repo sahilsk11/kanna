@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs"
 import { homedir } from "node:os"
 import path from "node:path"
-import { Database } from "bun:sqlite"
 import type { AgentProvider } from "../shared/types"
 import { resolveLocalPath } from "./paths"
 
@@ -223,63 +222,6 @@ function readCodexSessionMetadata(sessionsDir: string) {
   return metadataById
 }
 
-function timestampSecondsToMs(value: unknown): number | null {
-  const numeric = typeof value === "number"
-    ? value
-    : typeof value === "string"
-      ? Number(value)
-      : Number.NaN
-  if (!Number.isFinite(numeric) || numeric <= 0) {
-    return null
-  }
-  return numeric > 1_000_000_000_000 ? numeric : numeric * 1_000
-}
-
-function readHermesSessionCwd(modelConfig: unknown): string | null {
-  if (typeof modelConfig !== "string" || !modelConfig.trim()) {
-    return null
-  }
-  const record = parseJsonRecord(modelConfig)
-  const cwd = typeof record?.cwd === "string" ? record.cwd : null
-  return cwd?.trim() || null
-}
-
-function readHermesAcpSessions(stateDbPath: string) {
-  if (!existsSync(stateDbPath)) {
-    return []
-  }
-
-  let db: Database | null = null
-  try {
-    db = new Database(stateDbPath, { readonly: true })
-    return db.query<{
-      id: string
-      title: string | null
-      started_at: number | string
-      model_config: string | null
-      message_count: number | null
-      last_active: number | string | null
-    }, []>(`
-      SELECT
-        s.id,
-        s.title,
-        s.started_at,
-        s.model_config,
-        s.message_count,
-        COALESCE(MAX(m.timestamp), s.started_at) AS last_active
-      FROM sessions s
-      LEFT JOIN messages m ON m.session_id = s.id
-      WHERE s.source = 'acp'
-      GROUP BY s.id
-      ORDER BY last_active DESC, s.started_at DESC
-    `).all()
-  } catch {
-    return []
-  } finally {
-    db?.close()
-  }
-}
-
 export class CodexProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
   readonly provider = "codex" as const
 
@@ -342,54 +284,9 @@ export class CodexProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
   }
 }
 
-export class HermesProjectDiscoveryAdapter implements ProjectDiscoveryAdapter {
-  readonly provider = "hermes" as const
-
-  scan(homeDir: string = homedir()): ProviderDiscoveredProject[] {
-    const stateDbPath = path.join(homeDir, ".hermes", "state.db")
-    const projects: ProviderDiscoveredProject[] = []
-
-    for (const session of readHermesAcpSessions(stateDbPath)) {
-      if (session.message_count !== null && session.message_count <= 0) {
-        continue
-      }
-
-      const cwd = readHermesSessionCwd(session.model_config)
-      if (!cwd || !path.isAbsolute(cwd)) {
-        continue
-      }
-
-      const normalizedPath = normalizeExistingDirectory(cwd)
-      if (!normalizedPath) {
-        continue
-      }
-
-      const modifiedAt = timestampSecondsToMs(session.last_active)
-        ?? timestampSecondsToMs(session.started_at)
-        ?? statSync(normalizedPath).mtimeMs
-      const title = typeof session.title === "string" && session.title.trim()
-        ? session.title.trim()
-        : path.basename(normalizedPath) || normalizedPath
-
-      projects.push({
-        provider: this.provider,
-        localPath: normalizedPath,
-        title,
-        modifiedAt,
-      })
-    }
-
-    return mergeDiscoveredProjects(projects).map((project) => ({
-      provider: this.provider,
-      ...project,
-    }))
-  }
-}
-
 export const DEFAULT_PROJECT_DISCOVERY_ADAPTERS: ProjectDiscoveryAdapter[] = [
   new ClaudeProjectDiscoveryAdapter(),
   new CodexProjectDiscoveryAdapter(),
-  new HermesProjectDiscoveryAdapter(),
 ]
 
 export function discoverProjects(
