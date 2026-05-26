@@ -421,7 +421,7 @@ export class HermesAcpManager {
 
   constructor(args: { spawnProcess?: SpawnHermesAcp } = {}) {
     this.spawnProcess = args.spawnProcess ?? ((cwd) =>
-      spawn("node", [HERMES_ACP_BRIDGE_PATH], {
+      spawn(process.execPath, [HERMES_ACP_BRIDGE_PATH], {
         cwd,
         stdio: ["pipe", "pipe", "pipe"],
         env: process.env,
