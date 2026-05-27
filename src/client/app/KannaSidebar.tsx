@@ -1,16 +1,18 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
-import { Flower, Loader2, PanelLeft, X, Menu, Plus, Settings } from "lucide-react"
+import { AlertCircle, CheckCircle2, Flower, Loader2, PanelLeft, X, Menu, Plus, Settings } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { APP_NAME } from "../../shared/branding"
 import { Button } from "../components/ui/button"
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "../components/ui/dialog"
+import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog"
+import { Input } from "../components/ui/input"
 import { formatSidebarAgeLabel } from "../lib/formatters"
 import { getSidebarChatTimestamp } from "../lib/sidebarChats"
 import { cn } from "../lib/utils"
 import { ChatRow } from "../components/chat-ui/sidebar/ChatRow"
 import { LocalProjectsSection } from "../components/chat-ui/sidebar/LocalProjectsSection"
 import { getResolvedKeybindings } from "../lib/keybindings"
-import type { KeybindingsSnapshot, SidebarData, SidebarChatRow, UpdateSnapshot } from "../../shared/types"
+import type { KeybindingsSnapshot, SessionGroupingPreference, SidebarData, SidebarChatRow, SidebarProjectGroup, UpdateSnapshot } from "../../shared/types"
+import type { NewChatRequest } from "./useKannaState"
 import type { SocketStatus } from "./socket"
 import {
   getSidebarJumpTargetIndex,
@@ -41,6 +43,171 @@ function persistSidebarWidth(width: number) {
   window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(clampSidebarWidth(width)))
 }
 
+function getNewChatProjectId(group: SidebarProjectGroup) {
+  return (group.kind ?? "workspace") === "workspace"
+    ? group.projectId ?? group.groupKey
+    : undefined
+}
+
+function NewChatDialog({
+  group,
+  open,
+  onOpenChange,
+  onCreate,
+  onValidateDirectory,
+}: {
+  group: SidebarProjectGroup | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onCreate: (request: NewChatRequest) => Promise<void>
+  onValidateDirectory: (localPath: string) => Promise<string>
+}) {
+  const [title, setTitle] = useState("")
+  const [localPath, setLocalPath] = useState("")
+  const [validatedInput, setValidatedInput] = useState<string | null>(null)
+  const [validatedPath, setValidatedPath] = useState<string | null>(null)
+  const [pathError, setPathError] = useState<string | null>(null)
+  const [isValidating, setIsValidating] = useState(false)
+  const [isCreating, setIsCreating] = useState(false)
+  const trimmedPath = localPath.trim()
+  const isPathReady = Boolean(trimmedPath && validatedInput === trimmedPath && validatedPath && !pathError)
+  const groupKind = group?.kind ?? "workspace"
+  const taskWillBeCleared = Boolean(group?.taskId && validatedPath && validatedPath !== group.localPath)
+
+  useEffect(() => {
+    if (!open || !group) return
+    setTitle("")
+    setLocalPath(group.localPath)
+    setValidatedInput(null)
+    setValidatedPath(null)
+    setPathError(null)
+    setIsCreating(false)
+  }, [group, open])
+
+  useEffect(() => {
+    if (!open) return
+    setValidatedInput(null)
+    setValidatedPath(null)
+    setPathError(null)
+    if (!trimmedPath) {
+      setIsValidating(false)
+      return
+    }
+
+    let cancelled = false
+    setIsValidating(true)
+    const timeoutId = window.setTimeout(() => {
+      void onValidateDirectory(trimmedPath)
+        .then((normalizedPath) => {
+          if (cancelled) return
+          setValidatedInput(trimmedPath)
+          setValidatedPath(normalizedPath)
+          setPathError(null)
+        })
+        .catch((error) => {
+          if (cancelled) return
+          setPathError(error instanceof Error ? error.message : String(error))
+        })
+        .finally(() => {
+          if (!cancelled) {
+            setIsValidating(false)
+          }
+        })
+    }, 250)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [onValidateDirectory, open, trimmedPath])
+
+  async function handleCreate() {
+    if (!group || !isPathReady || isCreating) return
+    setIsCreating(true)
+    try {
+      await onCreate({
+        projectId: getNewChatProjectId(group),
+        taskId: groupKind === "task" ? group.taskId : null,
+        localPath: trimmedPath,
+        initialLocalPath: group.localPath,
+        title: title.trim() || null,
+      })
+      onOpenChange(false)
+    } catch {
+      // Command errors are surfaced by the shared app command error state.
+    } finally {
+      setIsCreating(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="md">
+        <DialogHeader>
+          <DialogTitle>New Chat</DialogTitle>
+          <DialogDescription>Name the chat and choose the working directory before creating it.</DialogDescription>
+        </DialogHeader>
+        <DialogBody className="flex flex-col gap-4">
+          <label className="flex flex-col gap-2">
+            <span className="text-sm font-medium text-foreground">Name</span>
+            <Input
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="Optional"
+              disabled={isCreating}
+            />
+          </label>
+          <label className="flex flex-col gap-2">
+            <span className="text-sm font-medium text-foreground">Working Directory</span>
+            <Input
+              value={localPath}
+              onChange={(event) => setLocalPath(event.target.value)}
+              aria-invalid={Boolean(pathError)}
+              disabled={isCreating}
+            />
+          </label>
+          <div className="min-h-5 text-xs text-muted-foreground">
+            {isValidating ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Loader2 className="size-3 animate-spin" />
+                Validating directory
+              </span>
+            ) : pathError ? (
+              <span className="inline-flex items-center gap-1.5 text-destructive">
+                <AlertCircle className="size-3" />
+                {pathError}
+              </span>
+            ) : isPathReady ? (
+              <span className="inline-flex items-center gap-1.5">
+                <CheckCircle2 className="size-3" />
+                {validatedPath}
+              </span>
+            ) : null}
+          </div>
+          {taskWillBeCleared ? (
+            <p className="text-xs text-muted-foreground">
+              This chat will be created outside the selected task because the directory changed.
+            </p>
+          ) : null}
+        </DialogBody>
+        <DialogFooter>
+          <Button type="button" variant="ghost" size="sm" onClick={() => onOpenChange(false)} disabled={isCreating}>
+            Cancel
+          </Button>
+          <Button type="button" size="sm" onClick={() => void handleCreate()} disabled={!isPathReady || isCreating}>
+            {isCreating ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                Creating
+              </>
+            ) : "Create"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
 interface KannaSidebarProps {
   data: SidebarData
   activeChatId: string | null
@@ -54,6 +221,8 @@ interface KannaSidebarProps {
   onCollapse: () => void
   onExpand: () => void
   onCreateChat: (projectId: string) => void
+  onCreateChatFromDirectory: (request: NewChatRequest) => Promise<void>
+  onValidateDirectory: (localPath: string) => Promise<string>
   onCreateTaskChat: (taskId: string, localPath: string) => void
   onForkChat: (chat: SidebarChatRow) => void
   currentProjectId: string | null
@@ -69,6 +238,7 @@ interface KannaSidebarProps {
   onRenameProject: (projectId: string, sidebarTitle: string | undefined, realTitle: string) => void
   onHideProject: (projectId: string) => void
   onReorderProjectGroups: (projectIds: string[]) => void
+  sessionGrouping: SessionGroupingPreference
   editorLabel: string
   updateSnapshot: UpdateSnapshot | null
   onOpenChangelog: () => void
@@ -87,6 +257,8 @@ function KannaSidebarImpl({
   onCollapse,
   onExpand,
   onCreateChat,
+  onCreateChatFromDirectory,
+  onValidateDirectory,
   onCreateTaskChat,
   onForkChat,
   currentProjectId,
@@ -102,6 +274,7 @@ function KannaSidebarImpl({
   onRenameProject,
   onHideProject,
   onReorderProjectGroups,
+  sessionGrouping,
   editorLabel,
   updateSnapshot,
   onOpenChangelog,
@@ -118,7 +291,9 @@ function KannaSidebarImpl({
   const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth)
   const [isResizingSidebar, setIsResizingSidebar] = useState(false)
   const [archivedProjectId, setArchivedProjectId] = useState<string | null>(null)
+  const [newChatGroup, setNewChatGroup] = useState<SidebarProjectGroup | null>(null)
   const isTaskMode = data.projectGroups.some((group) => group.kind === "task" || group.kind === "unassigned")
+  const shouldConfirmNewChat = sessionGrouping === "tasks"
   const resolvedKeybindings = useMemo(() => getResolvedKeybindings(keybindings), [keybindings])
   const visibleChats = useMemo(
     () => getVisibleSidebarChats(data.projectGroups, collapsedSections, expandedGroups),
@@ -192,6 +367,21 @@ function KannaSidebarImpl({
       return next
     })
   }, [])
+
+  const handleNewLocalChat = useCallback((group: SidebarProjectGroup) => {
+    const groupKind = group.kind ?? "workspace"
+    if (shouldConfirmNewChat) {
+      setNewChatGroup(group)
+      return
+    }
+    if (groupKind === "task" && group.taskId && group.localPath) {
+      onCreateTaskChat(group.taskId, group.localPath)
+      return
+    }
+    if (groupKind === "workspace") {
+      onCreateChat(getNewChatProjectId(group) ?? group.groupKey)
+    }
+  }, [onCreateChat, onCreateTaskChat, shouldConfirmNewChat])
 
   const renderChatRow = useCallback((chat: SidebarChatRow) => {
     const visibleIndex = visibleIndexByChatId.get(chat.chatId)
@@ -510,16 +700,7 @@ function KannaSidebarImpl({
               onToggleExpandedGroup={toggleExpandedGroup}
               renderChatRow={renderChatRow}
               onShowArchivedProject={setArchivedProjectId}
-              onNewLocalChat={(group) => {
-                const groupKind = group.kind ?? "workspace"
-                if (groupKind === "task" && group.taskId && group.localPath) {
-                  onCreateTaskChat(group.taskId, group.localPath)
-                  return
-                }
-                if (groupKind === "workspace") {
-                  onCreateChat(group.projectId ?? group.groupKey)
-                }
-              }}
+              onNewLocalChat={handleNewLocalChat}
               onCopyPath={onCopyPath}
               onOpenExternalPath={onOpenExternalPath}
               onRenameProject={onRenameProject}
@@ -636,6 +817,16 @@ function KannaSidebarImpl({
           </DialogBody>
         </DialogContent>
       </Dialog>
+
+      <NewChatDialog
+        group={newChatGroup}
+        open={Boolean(newChatGroup)}
+        onOpenChange={(dialogOpen) => {
+          if (!dialogOpen) setNewChatGroup(null)
+        }}
+        onCreate={onCreateChatFromDirectory}
+        onValidateDirectory={onValidateDirectory}
+      />
 
       {open ? <div className="fixed inset-0 bg-black/40 z-40 md:hidden" onClick={onClose} /> : null}
     </>

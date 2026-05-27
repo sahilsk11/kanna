@@ -772,12 +772,13 @@ export class EventStore {
     return this.writeChain
   }
 
-  async createChat(projectId: string, options?: { taskId?: string | null }) {
+  async createChat(projectId: string, options?: { taskId?: string | null; title?: string | null }) {
     const project = this.state.projectsById.get(projectId)
     if (!project || project.deletedAt) {
       throw new Error("Project not found")
     }
     const taskId = options?.taskId ?? null
+    const title = options?.title?.trim() || "New Chat"
     if (taskId) {
       const task = this.state.tasksById.get(taskId)
       if (!task || task.deletedAt) {
@@ -792,7 +793,7 @@ export class EventStore {
       chatId,
       projectId,
       taskId,
-      title: "New Chat",
+      title,
     }
     await this.append(this.chatsLogPath, event)
     return this.state.chatsById.get(chatId)!

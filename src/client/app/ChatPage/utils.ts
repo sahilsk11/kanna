@@ -10,6 +10,10 @@ export const EMPTY_DIFF_SNAPSHOT: ChatDiffSnapshot = { status: "unknown", files:
 export const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 12
 export const CHAT_SELECTION_AUTOFOLLOW_WINDOW_MS = 600
 
+export function shouldShowChatEmptyState(messagesLength: number, hasRuntime: boolean) {
+  return hasRuntime && messagesLength === 0
+}
+
 export function getIgnoreFolderEntryFromDiffPath(filePath: string) {
   const normalized = filePath.replaceAll("\\", "/").replace(/\/+/g, "/").replace(/\/$/u, "")
   const lastSlashIndex = normalized.lastIndexOf("/")

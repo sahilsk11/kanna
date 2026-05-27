@@ -600,6 +600,14 @@ export interface TaskRequest {
   title: string
 }
 
+export interface NewChatRequest {
+  projectId?: string
+  taskId?: string | null
+  localPath: string
+  initialLocalPath?: string
+  title?: string | null
+}
+
 export type StartChatIntent =
   | { kind: "project_id"; projectId: string }
   | { kind: "task"; taskId: string; localPath: string }
@@ -683,6 +691,8 @@ export interface KannaState {
   closeAddProjectModal: () => void
   loadOlderHistory: () => Promise<void>
   handleCreateChat: (projectId: string) => Promise<void>
+  handleCreateChatFromDirectory: (request: NewChatRequest) => Promise<void>
+  handleValidateDirectory: (localPath: string) => Promise<string>
   handleCreateTaskChat: (taskId: string, localPath: string) => Promise<void>
   handleForkChat: (chat: SidebarChatRow) => Promise<void>
   handleOpenLocalProject: (localPath: string) => Promise<void>
@@ -1375,12 +1385,20 @@ export function useKannaState(activeChatId: string | null): KannaState {
     }
   }, [activeChatId, hasOlderHistory, historyCursor, isHistoryLoading, socket])
 
-  const createChatForProject = useCallback(async (projectId: string, taskId?: string | null) => {
+  const createChatForProject = useCallback(async (
+    projectId: string,
+    options?: { taskId?: string | null; title?: string | null }
+  ) => {
     const chatPreferences = useChatPreferencesStore.getState()
     const sourceComposerState = activeChatId
       ? chatPreferences.getComposerState(activeChatId)
       : chatPreferences.getComposerState(NEW_CHAT_COMPOSER_ID)
-    const result = await socket.command<{ chatId: string }>({ type: "chat.create", projectId, taskId })
+    const result = await socket.command<{ chatId: string }>({
+      type: "chat.create",
+      projectId,
+      taskId: options?.taskId,
+      title: options?.title,
+    })
     chatPreferences.initializeComposerForChat(result.chatId, { sourceState: sourceComposerState })
     setSelectedProjectId(projectId)
     setPendingChat(result.chatId)
@@ -1424,7 +1442,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
       }
 
       const { projectId } = await resolveProjectIdForStartChat(intent)
-      await createChatForProject(projectId, intent.kind === "task" ? intent.taskId : null)
+      await createChatForProject(projectId, { taskId: intent.kind === "task" ? intent.taskId : null })
     } catch (error) {
       setCommandError(error instanceof Error ? error.message : String(error))
     } finally {
@@ -1435,6 +1453,44 @@ export function useKannaState(activeChatId: string | null): KannaState {
   const handleCreateChat = useCallback(async (projectId: string) => {
     await startChatFromIntent({ kind: "project_id", projectId })
   }, [startChatFromIntent])
+
+  const handleCreateChatFromDirectory = useCallback(async (request: NewChatRequest) => {
+    const localPath = request.localPath.trim()
+    try {
+      if (!localPath) {
+        throw new Error("Project path is required")
+      }
+      setStartingLocalPath(localPath)
+      const validation = await socket.command<{ localPath: string }>({
+        type: "project.validateDirectory",
+        localPath,
+      })
+      const initialLocalPath = request.initialLocalPath ?? request.localPath
+      const usesInitialProject = Boolean(request.projectId && validation.localPath === initialLocalPath)
+      const projectId = usesInitialProject
+        ? request.projectId!
+        : (await socket.command<{ projectId: string }>({ type: "project.open", localPath: validation.localPath })).projectId
+      const taskId = validation.localPath === initialLocalPath ? request.taskId : null
+
+      await createChatForProject(projectId, {
+        taskId,
+        title: request.title,
+      })
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : String(error))
+      throw error
+    } finally {
+      setStartingLocalPath(null)
+    }
+  }, [createChatForProject, socket])
+
+  const handleValidateDirectory = useCallback(async (localPath: string) => {
+    const result = await socket.command<{ localPath: string }>({
+      type: "project.validateDirectory",
+      localPath,
+    })
+    return result.localPath
+  }, [socket])
 
   const handleCreateTaskChat = useCallback(async (taskId: string, localPath: string) => {
     await startChatFromIntent({ kind: "task", taskId, localPath })
@@ -2106,6 +2162,8 @@ export function useKannaState(activeChatId: string | null): KannaState {
     closeAddProjectModal,
     loadOlderHistory,
     handleCreateChat,
+    handleCreateChatFromDirectory,
+    handleValidateDirectory,
     handleCreateTaskChat,
     handleForkChat,
     handleOpenLocalProject,
