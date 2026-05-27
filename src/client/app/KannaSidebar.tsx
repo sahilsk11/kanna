@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react"
 import { AlertCircle, CheckCircle2, Flower, Loader2, PanelLeft, X, Menu, Plus, Settings } from "lucide-react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { APP_NAME } from "../../shared/branding"
@@ -140,6 +140,11 @@ function NewChatDialog({
     }
   }
 
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    void handleCreate()
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="md">
@@ -147,62 +152,64 @@ function NewChatDialog({
           <DialogTitle>New Chat</DialogTitle>
           <DialogDescription>Name the chat and choose the working directory before creating it.</DialogDescription>
         </DialogHeader>
-        <DialogBody className="flex flex-col gap-4">
-          <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium text-foreground">Name</span>
-            <Input
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="Optional"
-              disabled={isCreating}
-            />
-          </label>
-          <label className="flex flex-col gap-2">
-            <span className="text-sm font-medium text-foreground">Working Directory</span>
-            <Input
-              value={localPath}
-              onChange={(event) => setLocalPath(event.target.value)}
-              aria-invalid={Boolean(pathError)}
-              disabled={isCreating}
-            />
-          </label>
-          <div className="min-h-5 text-xs text-muted-foreground">
-            {isValidating ? (
-              <span className="inline-flex items-center gap-1.5">
-                <Loader2 className="size-3 animate-spin" />
-                Validating directory
-              </span>
-            ) : pathError ? (
-              <span className="inline-flex items-center gap-1.5 text-destructive">
-                <AlertCircle className="size-3" />
-                {pathError}
-              </span>
-            ) : isPathReady ? (
-              <span className="inline-flex items-center gap-1.5">
-                <CheckCircle2 className="size-3" />
-                {validatedPath}
-              </span>
+        <form onSubmit={handleSubmit}>
+          <DialogBody className="flex flex-col gap-4">
+            <label className="flex flex-col gap-2">
+              <span className="text-sm font-medium text-foreground">Name</span>
+              <Input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="Optional"
+                disabled={isCreating}
+              />
+            </label>
+            <label className="flex flex-col gap-2">
+              <span className="text-sm font-medium text-foreground">Working Directory</span>
+              <Input
+                value={localPath}
+                onChange={(event) => setLocalPath(event.target.value)}
+                aria-invalid={Boolean(pathError)}
+                disabled={isCreating}
+              />
+            </label>
+            <div className="min-h-5 text-xs text-muted-foreground">
+              {isValidating ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <Loader2 className="size-3 animate-spin" />
+                  Validating directory
+                </span>
+              ) : pathError ? (
+                <span className="inline-flex items-center gap-1.5 text-destructive">
+                  <AlertCircle className="size-3" />
+                  {pathError}
+                </span>
+              ) : isPathReady ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <CheckCircle2 className="size-3" />
+                  {validatedPath}
+                </span>
+              ) : null}
+            </div>
+            {taskWillBeCleared ? (
+              <p className="text-xs text-muted-foreground">
+                This chat will be created outside the selected task because the directory changed.
+              </p>
             ) : null}
-          </div>
-          {taskWillBeCleared ? (
-            <p className="text-xs text-muted-foreground">
-              This chat will be created outside the selected task because the directory changed.
-            </p>
-          ) : null}
-        </DialogBody>
-        <DialogFooter>
-          <Button type="button" variant="ghost" size="sm" onClick={() => onOpenChange(false)} disabled={isCreating}>
-            Cancel
-          </Button>
-          <Button type="button" size="sm" onClick={() => void handleCreate()} disabled={!isPathReady || isCreating}>
-            {isCreating ? (
-              <>
-                <Loader2 className="size-4 animate-spin" />
-                Creating
-              </>
-            ) : "Create"}
-          </Button>
-        </DialogFooter>
+          </DialogBody>
+          <DialogFooter>
+            <Button type="button" variant="ghost" size="sm" onClick={() => onOpenChange(false)} disabled={isCreating}>
+              Cancel
+            </Button>
+            <Button type="submit" size="sm" disabled={!isPathReady || isCreating}>
+              {isCreating ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  Creating
+                </>
+              ) : "Create"}
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   )
