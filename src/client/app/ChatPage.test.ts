@@ -7,6 +7,7 @@ import {
   hasFileDragTypes,
   shouldUseMobileRightSidebarOverlay,
   shouldAutoFollowTranscriptResize,
+  shouldShowChatEmptyState,
 } from "./ChatPage"
 
 describe("hasFileDragTypes", () => {
@@ -44,6 +45,20 @@ describe("shouldAutoFollowTranscriptResize", () => {
 
   test("stops forcing auto-follow after the selection window expires", () => {
     expect(shouldAutoFollowTranscriptResize(true, 2_000, 2_000)).toBe(false)
+  })
+})
+
+describe("shouldShowChatEmptyState", () => {
+  test("shows for empty chats with a runtime regardless of title", () => {
+    expect(shouldShowChatEmptyState(0, true)).toBe(true)
+  })
+
+  test("hides before the chat runtime is loaded", () => {
+    expect(shouldShowChatEmptyState(0, false)).toBe(false)
+  })
+
+  test("hides once transcript messages exist", () => {
+    expect(shouldShowChatEmptyState(1, true)).toBe(false)
   })
 })
 

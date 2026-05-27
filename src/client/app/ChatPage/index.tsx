@@ -36,12 +36,14 @@ import {
   EMPTY_STATE_TYPING_INTERVAL_MS,
   hasFileDragTypes,
   sameContextWindowSnapshot,
+  shouldShowChatEmptyState,
 } from "./utils"
 
 export {
   getIgnoreFolderEntryFromDiffPath,
   hasFileDragTypes,
   shouldAutoFollowTranscriptResize,
+  shouldShowChatEmptyState,
 } from "./utils"
 
 function useEmptyStateTyping(showEmptyState: boolean, activeChatId: string | null) {
@@ -479,7 +481,7 @@ export function ChatPage() {
   const { inputRef, syncInputHeight, transcriptPaddingBottom } = useTranscriptPaddingBottom()
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
   const [pendingTerminalCommands, setPendingTerminalCommands] = useState<Record<string, string>>({})
-  const showEmptyState = state.messages.length === 0 && state.runtime?.title === "New Chat"
+  const showEmptyState = shouldShowChatEmptyState(state.messages.length, Boolean(state.runtime))
   const projectId = state.activeProjectId
   const projectTerminalLayout = useTerminalLayoutStore((store) => (projectId ? store.projects[projectId] : undefined))
   const terminalLayout = projectTerminalLayout ?? DEFAULT_PROJECT_TERMINAL_LAYOUT
