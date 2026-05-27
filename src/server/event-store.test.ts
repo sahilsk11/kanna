@@ -483,6 +483,19 @@ describe("EventStore", () => {
     }
   })
 
+  test("creates chats with an optional initial title", async () => {
+    const dataDir = await createTempDataDir()
+    const store = new EventStore(dataDir)
+    await store.initialize()
+
+    const project = await store.openProject("/tmp/project")
+    const chat = await store.createChat(project.id, { title: "Launch Plan" })
+    const fallback = await store.createChat(project.id, { title: "   " })
+
+    expect(chat.title).toBe("Launch Plan")
+    expect(fallback.title).toBe("New Chat")
+  })
+
   test("prunes stale empty chats after thirty minutes", async () => {
     const dataDir = await createTempDataDir()
     const store = new EventStore(dataDir)

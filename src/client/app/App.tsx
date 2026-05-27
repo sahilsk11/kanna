@@ -211,6 +211,9 @@ function KannaLayout() {
   const handleSidebarCreateTaskChat = useCallback((taskId: string, localPath: string) => {
     void state.handleCreateTaskChat(taskId, localPath)
   }, [state.handleCreateTaskChat])
+  const handleSidebarCreateChatFromDirectory = useCallback((request: Parameters<typeof state.handleCreateChatFromDirectory>[0]) => {
+    return state.handleCreateChatFromDirectory(request)
+  }, [state.handleCreateChatFromDirectory])
   const handleSidebarForkChat = useCallback((chat: Parameters<typeof state.handleForkChat>[0]) => {
     void state.handleForkChat(chat)
   }, [state.handleForkChat])
@@ -264,6 +267,8 @@ function KannaLayout() {
       onCollapse={state.collapseSidebar}
       onExpand={state.expandSidebar}
       onCreateChat={handleSidebarCreateChat}
+      onCreateChatFromDirectory={handleSidebarCreateChatFromDirectory}
+      onValidateDirectory={state.handleValidateDirectory}
       onCreateTaskChat={handleSidebarCreateTaskChat}
       onForkChat={handleSidebarForkChat}
       currentProjectId={state.activeProjectId}
@@ -279,6 +284,7 @@ function KannaLayout() {
       onRenameProject={handleSidebarRenameProject}
       onHideProject={handleSidebarHideProject}
       onReorderProjectGroups={handleSidebarReorderProjectGroups}
+      sessionGrouping={state.appSettings?.sessionGrouping ?? "default"}
       editorLabel={state.editorLabel}
       updateSnapshot={state.updateSnapshot}
       onOpenChangelog={handleOpenChangelog}
@@ -288,6 +294,7 @@ function KannaLayout() {
     handleOpenAddProjectModal,
     handleSidebarCopyPath,
     handleSidebarCreateChat,
+    handleSidebarCreateChatFromDirectory,
     handleSidebarArchiveChat,
     handleSidebarDeleteChat,
     handleOpenArchivedChat,
@@ -302,6 +309,8 @@ function KannaLayout() {
     state.activeChatId,
     state.activeProjectId,
     state.keybindings,
+    state.handleValidateDirectory,
+    state.appSettings?.sessionGrouping,
     state.closeSidebar,
     state.collapseSidebar,
     state.connectionStatus,

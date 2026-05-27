@@ -833,6 +833,94 @@ describe("ws-router", () => {
     }
   })
 
+  test("validates an existing project directory without opening it", async () => {
+    const projectPath = await mkdtemp(path.join(tmpdir(), "kanna-router-validate-"))
+    let storeCalled = false
+
+    try {
+      const router = createWsRouter({
+        store: {
+          state: createEmptyState(),
+          openProject: async () => {
+            storeCalled = true
+          },
+        } as never,
+        agent: { getActiveStatuses: () => new Map(), getDrainingChatIds: () => new Set() } as never,
+        terminals: {
+          getSnapshot: () => null,
+          onEvent: () => () => {},
+        } as never,
+        keybindings: {
+          getSnapshot: () => DEFAULT_KEYBINDINGS_SNAPSHOT,
+          onChange: () => () => {},
+        } as never,
+        refreshDiscovery: async () => [],
+        getDiscoveredProjects: () => [],
+        machineDisplayName: "Local Machine",
+        updateManager: null,
+      })
+      const ws = new FakeWebSocket()
+
+      await router.handleMessage(
+        ws as never,
+        JSON.stringify({
+          v: 1,
+          type: "command",
+          id: "project-validate-1",
+          command: { type: "project.validateDirectory", localPath: projectPath },
+        })
+      )
+
+      expect(ws.sent[0]).toEqual({
+        v: PROTOCOL_VERSION,
+        type: "ack",
+        id: "project-validate-1",
+        result: { localPath: projectPath },
+      })
+      expect(storeCalled).toBe(false)
+    } finally {
+      await rm(projectPath, { recursive: true, force: true })
+    }
+  })
+
+  test("rejects directory validation when the path does not exist", async () => {
+    const missingPath = path.join(tmpdir(), `kanna-missing-project-${crypto.randomUUID()}`)
+    const router = createWsRouter({
+      store: { state: createEmptyState() } as never,
+      agent: { getActiveStatuses: () => new Map(), getDrainingChatIds: () => new Set() } as never,
+      terminals: {
+        getSnapshot: () => null,
+        onEvent: () => () => {},
+      } as never,
+      keybindings: {
+        getSnapshot: () => DEFAULT_KEYBINDINGS_SNAPSHOT,
+        onChange: () => () => {},
+      } as never,
+      refreshDiscovery: async () => [],
+      getDiscoveredProjects: () => [],
+      machineDisplayName: "Local Machine",
+      updateManager: null,
+    })
+    const ws = new FakeWebSocket()
+
+    await router.handleMessage(
+      ws as never,
+      JSON.stringify({
+        v: 1,
+        type: "command",
+        id: "project-validate-missing-path",
+        command: { type: "project.validateDirectory", localPath: missingPath },
+      })
+    )
+
+    expect(ws.sent[0]).toEqual({
+      v: PROTOCOL_VERSION,
+      type: "error",
+      id: "project-validate-missing-path",
+      message: "Project path does not exist",
+    })
+  })
+
   test("rejects task creation when the path does not exist", async () => {
     const missingPath = path.join(tmpdir(), `kanna-missing-task-${crypto.randomUUID()}`)
     let storeCalled = false

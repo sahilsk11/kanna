@@ -1213,6 +1213,16 @@ export function createWsRouter({
           }
           break
         }
+        case "project.validateDirectory": {
+          await validateExistingProjectDirectory(command.localPath)
+          send(ws, {
+            v: PROTOCOL_VERSION,
+            type: "ack",
+            id,
+            result: { localPath: resolveLocalPath(command.localPath) },
+          })
+          return
+        }
         case "project.create": {
           await ensureProjectDirectory(command.localPath)
           const normalizedPath = resolveLocalPath(command.localPath)
@@ -1282,7 +1292,10 @@ export function createWsRouter({
           break
         }
         case "chat.create": {
-          const chat = await store.createChat(command.projectId, { taskId: command.taskId })
+          const chat = await store.createChat(command.projectId, {
+            taskId: command.taskId,
+            title: command.title,
+          })
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result: { chatId: chat.id } })
           resolvedAnalytics.track("chat_created")
           await broadcastChatAndSidebar(chat.id)
