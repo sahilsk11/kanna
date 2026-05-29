@@ -25,6 +25,8 @@ import {
   type RequestPermissionResponse,
   type ResumeSessionParams,
   type ResumeSessionResponse,
+  type SetSessionModelParams,
+  type SetSessionModelResponse,
   type SessionInfo,
   type SessionUpdate,
   type SessionUpdateNotification,
@@ -570,16 +572,17 @@ export class HermesAcpManager {
     }
     context.pendingTurn = pendingTurn
 
-    void this.sendRequest<PromptResponse>(context, "session/prompt", {
-      sessionId: context.sessionToken,
-      messageId: randomUUID(),
-      prompt: [
-        {
-          type: "text",
-          text: args.content,
-        },
-      ],
-    } satisfies PromptParams)
+    void this.prepareTurn(context, args.model)
+      .then(() => this.sendRequest<PromptResponse>(context, "session/prompt", {
+        sessionId: context.sessionToken!,
+        messageId: randomUUID(),
+        prompt: [
+          {
+            type: "text",
+            text: args.content,
+          },
+        ],
+      } satisfies PromptParams))
       .then((response) => this.handlePromptCompleted(context, response))
       .catch((error) => this.failTurn(context, errorMessage(error)))
 
@@ -860,6 +863,10 @@ export class HermesAcpManager {
 
     this.flushBufferedAssistantText(pendingTurn)
 
+    const isCancelled = response.stopReason === "cancelled"
+    const isRefusal = response.stopReason === "refusal"
+    const noOutputMessage = this.getNoOutputErrorMessage(context, pendingTurn, response)
+
     const usage = normalizeUsageFromPrompt(response.usage)
     if (usage) {
       pendingTurn.queue.push({
@@ -871,8 +878,7 @@ export class HermesAcpManager {
       })
     }
 
-    const isCancelled = response.stopReason === "cancelled"
-    const isError = response.stopReason === "refusal"
+    const isError = isRefusal || Boolean(noOutputMessage)
     pendingTurn.queue.push({
       type: "transcript",
       entry: timestamped({
@@ -880,11 +886,35 @@ export class HermesAcpManager {
         subtype: isCancelled ? "cancelled" : isError ? "error" : "success",
         isError,
         durationMs: 0,
-        result: isError ? response.stopReason : "",
+        result: noOutputMessage ?? (isRefusal ? response.stopReason : ""),
       }),
     })
     pendingTurn.queue.finish()
     context.pendingTurn = null
+  }
+
+  private async prepareTurn(context: SessionContext, model: string | undefined) {
+    if (this.providerConfig.provider !== "opencode" || !model || model === DEFAULT_OPENCODE_MODEL) return
+    if (!context.sessionToken) {
+      throw new Error(`${this.providerConfig.displayName} session not initialized`)
+    }
+    await this.sendRequest<SetSessionModelResponse>(context, "session/set_model", {
+      sessionId: context.sessionToken,
+      modelId: model,
+    } satisfies SetSessionModelParams)
+  }
+
+  private getNoOutputErrorMessage(
+    context: SessionContext,
+    pendingTurn: PendingTurn,
+    response: PromptResponse
+  ) {
+    if (response.stopReason !== "end_turn") return null
+    if (pendingTurn.assistantText.trim().length > 0 || pendingTurn.startedToolIds.size > 0) return null
+    const stderr = context.stderrLines.at(-1)
+    return stderr
+      ? `${this.providerConfig.displayName} returned no output. Last ${this.providerConfig.displayName} log: ${stderr}`
+      : `${this.providerConfig.displayName} returned no output. Check ${this.providerConfig.displayName} authentication and provider configuration.`
   }
 
   private failTurn(context: SessionContext, message: string) {

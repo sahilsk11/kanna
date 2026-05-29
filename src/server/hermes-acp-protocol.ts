@@ -60,6 +60,13 @@ export interface NewSessionResponse {
   configOptions?: unknown[]
 }
 
+export interface SetSessionModelParams {
+  sessionId: string
+  modelId: string
+}
+
+export interface SetSessionModelResponse {}
+
 export interface LoadSessionParams {
   cwd: string
   sessionId: string
