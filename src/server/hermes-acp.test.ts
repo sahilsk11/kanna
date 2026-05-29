@@ -54,6 +54,15 @@ async function collectStream(stream: AsyncIterable<any>) {
   return items
 }
 
+async function waitFor(predicate: () => boolean, timeoutMs = 100) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await new Promise((resolve) => setTimeout(resolve, 1))
+  }
+  throw new Error("Timed out waiting for condition")
+}
+
 describe("HermesAcpManager", () => {
   test("initializes Hermes ACP and starts a fresh session", async () => {
     const process = new FakeHermesProcess((message, child) => {
@@ -580,6 +589,87 @@ describe("HermesAcpManager", () => {
       sessionId: "opencode-session-1",
       modelId: "opencode/big-pickle",
     })
+  })
+
+  test("does not prompt OpenCode if interrupted while setting the model", async () => {
+    let setModelRequest: any
+    const process = new FakeHermesProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } })
+      } else if (message.method === "session/new") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { sessionId: "opencode-session-1" } })
+      } else if (message.method === "session/set_model") {
+        setModelRequest = message
+      } else if (message.method === "session/prompt") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } })
+      }
+    })
+    const manager = new OpenCodeAcpManager({ spawnProcess: () => process as never })
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+
+    const turn = await manager.startTurn({ chatId: "chat-1", content: "ping", model: "opencode/big-pickle" })
+    await waitFor(() => Boolean(setModelRequest))
+    await turn.interrupt()
+    process.writeAgentMessage({ jsonrpc: "2.0", id: setModelRequest.id, result: {} })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(process.messages.map((message: any) => message.method)).toEqual([
+      "initialize",
+      "session/new",
+      "session/set_model",
+      "session/cancel",
+    ])
+  })
+
+  test("resets OpenCode to the configured default model", async () => {
+    const process = new FakeHermesProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } })
+      } else if (message.method === "session/new") {
+        child.writeAgentMessage({
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            sessionId: "opencode-session-1",
+            configOptions: [
+              {
+                id: "model",
+                category: "model",
+                currentValue: "nvidia/moonshotai/kimi-k2.6",
+              },
+            ],
+          },
+        })
+      } else if (message.method === "session/set_model") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: {} })
+      } else if (message.method === "session/prompt") {
+        child.writeAgentMessage({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "opencode-session-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "pong" },
+            },
+          },
+        })
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } })
+      }
+    })
+    const manager = new OpenCodeAcpManager({ spawnProcess: () => process as never })
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+
+    await collectStream((await manager.startTurn({ chatId: "chat-1", content: "custom", model: "opencode/big-pickle" })).stream)
+    await collectStream((await manager.startTurn({ chatId: "chat-1", content: "default", model: "opencode-configured-default" })).stream)
+    const modelSelections = process.messages
+      .filter((message: any) => message.method === "session/set_model")
+      .map((message: any) => message.params.modelId)
+
+    expect(modelSelections).toEqual([
+      "opencode/big-pickle",
+      "nvidia/moonshotai/kimi-k2.6",
+    ])
   })
 
   test("reports no-output OpenCode turns as visible errors", async () => {

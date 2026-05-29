@@ -73,6 +73,7 @@ interface SessionContext {
   pendingRequests: Map<HermesAcpRequestId, PendingRequest<unknown>>
   pendingTurn: PendingTurn | null
   sessionToken: string | null
+  defaultModelId: string | null
   stderrLines: string[]
   closed: boolean
 }
@@ -147,6 +148,21 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+function modelIdFromConfigOptions(configOptions: unknown): string | null {
+  if (!Array.isArray(configOptions)) return null
+  for (const option of configOptions) {
+    const record = asRecord(option)
+    if (!record) continue
+    const id = typeof record.id === "string" ? record.id : ""
+    const category = typeof record.category === "string" ? record.category : ""
+    const currentValue = typeof record.currentValue === "string" ? record.currentValue.trim() : ""
+    if (currentValue && (id === "model" || category === "model")) {
+      return currentValue
+    }
+  }
+  return null
 }
 
 function textFromContentBlock(content: unknown): string {
@@ -468,6 +484,7 @@ export class HermesAcpManager {
       pendingRequests: new Map(),
       pendingTurn: null,
       sessionToken: null,
+      defaultModelId: null,
       stderrLines: [],
       closed: false,
     }
@@ -495,19 +512,22 @@ export class HermesAcpManager {
         mcpServers: [],
       } satisfies ForkSessionParams)
       context.sessionToken = response.sessionId || null
+      context.defaultModelId = modelIdFromConfigOptions(response.configOptions)
     } else if (args.sessionToken) {
-      await this.sendRequest<ResumeSessionResponse>(context, "session/resume", {
+      const response = await this.sendRequest<ResumeSessionResponse>(context, "session/resume", {
         cwd: args.cwd,
         sessionId: args.sessionToken,
         mcpServers: [],
       } satisfies ResumeSessionParams)
       context.sessionToken = args.sessionToken
+      context.defaultModelId = modelIdFromConfigOptions(response.configOptions)
     } else {
       const response = await this.sendRequest<NewSessionResponse>(context, "session/new", {
         cwd: args.cwd,
         mcpServers: [],
       } satisfies NewSessionParams)
       context.sessionToken = response.sessionId
+      context.defaultModelId = modelIdFromConfigOptions(response.configOptions)
     }
 
     return context.sessionToken ?? undefined
@@ -524,6 +544,7 @@ export class HermesAcpManager {
       pendingRequests: new Map(),
       pendingTurn: null,
       sessionToken: null,
+      defaultModelId: null,
       stderrLines: [],
       closed: false,
     }
@@ -573,17 +594,26 @@ export class HermesAcpManager {
     context.pendingTurn = pendingTurn
 
     void this.prepareTurn(context, args.model)
-      .then(() => this.sendRequest<PromptResponse>(context, "session/prompt", {
-        sessionId: context.sessionToken!,
-        messageId: randomUUID(),
-        prompt: [
-          {
-            type: "text",
-            text: args.content,
-          },
-        ],
-      } satisfies PromptParams))
-      .then((response) => this.handlePromptCompleted(context, response))
+      .then((shouldPrompt) => {
+        if (!shouldPrompt || context.pendingTurn !== pendingTurn || pendingTurn.resolved) {
+          return null
+        }
+        return this.sendRequest<PromptResponse>(context, "session/prompt", {
+          sessionId: context.sessionToken!,
+          messageId: randomUUID(),
+          prompt: [
+            {
+              type: "text",
+              text: args.content,
+            },
+          ],
+        } satisfies PromptParams)
+      })
+      .then((response) => {
+        if (response) {
+          this.handlePromptCompleted(context, response)
+        }
+      })
       .catch((error) => this.failTurn(context, errorMessage(error)))
 
     return {
@@ -894,14 +924,17 @@ export class HermesAcpManager {
   }
 
   private async prepareTurn(context: SessionContext, model: string | undefined) {
-    if (this.providerConfig.provider !== "opencode" || !model || model === DEFAULT_OPENCODE_MODEL) return
+    if (this.providerConfig.provider !== "opencode" || !model) return true
     if (!context.sessionToken) {
       throw new Error(`${this.providerConfig.displayName} session not initialized`)
     }
+    const modelId = model === DEFAULT_OPENCODE_MODEL ? context.defaultModelId : model
+    if (!modelId) return true
     await this.sendRequest<SetSessionModelResponse>(context, "session/set_model", {
       sessionId: context.sessionToken,
-      modelId: model,
+      modelId,
     } satisfies SetSessionModelParams)
+    return true
   }
 
   private getNoOutputErrorMessage(
