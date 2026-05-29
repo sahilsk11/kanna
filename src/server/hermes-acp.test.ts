@@ -753,6 +753,59 @@ describe("HermesAcpManager", () => {
     })
   })
 
+  test("turns OpenCode thought chunks into one status row without persisting raw thoughts", async () => {
+    const process = new FakeHermesProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } })
+      } else if (message.method === "session/new") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { sessionId: "opencode-session-1" } })
+      } else if (message.method === "session/set_model") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: {} })
+      } else if (message.method === "session/prompt") {
+        for (const text of ["The", " model", " is thinking"]) {
+          child.writeAgentMessage({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "opencode-session-1",
+              update: {
+                sessionUpdate: "agent_thought_chunk",
+                content: { type: "text", text },
+              },
+            },
+          })
+        }
+        child.writeAgentMessage({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "opencode-session-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "pong" },
+            },
+          },
+        })
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } })
+      }
+    })
+    const manager = new OpenCodeAcpManager({ spawnProcess: () => process as never })
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+
+    const turn = await manager.startTurn({ chatId: "chat-1", content: "ping", model: "opencode/big-pickle" })
+    const events = await collectStream(turn.stream)
+    const transcriptEntries = events
+      .filter((event) => event.type === "transcript")
+      .map((event) => event.entry)
+
+    expect(transcriptEntries.filter((entry) => entry.kind === "status")).toEqual([
+      expect.objectContaining({ kind: "status", status: "thinking" }),
+    ])
+    expect(transcriptEntries.filter((entry) => entry.kind === "assistant_text")).toEqual([
+      expect.objectContaining({ kind: "assistant_text", text: "pong" }),
+    ])
+  })
+
   test("does not report plan-only OpenCode turns as no-output errors", async () => {
     const process = new FakeHermesProcess((message, child) => {
       if (message.method === "initialize") {
