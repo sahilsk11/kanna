@@ -621,6 +621,59 @@ describe("HermesAcpManager", () => {
     ])
   })
 
+  test("ignores stale OpenCode model-switch failures after a new turn starts", async () => {
+    let firstSetModelRequest: any
+    const process = new FakeHermesProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } })
+      } else if (message.method === "session/new") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { sessionId: "opencode-session-1" } })
+      } else if (message.method === "session/set_model") {
+        if (!firstSetModelRequest) {
+          firstSetModelRequest = message
+        } else {
+          child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: {} })
+        }
+      } else if (message.method === "session/prompt") {
+        child.writeAgentMessage({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "opencode-session-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "second turn ok" },
+            },
+          },
+        })
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } })
+      }
+    })
+    const manager = new OpenCodeAcpManager({ spawnProcess: () => process as never })
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+
+    const firstTurn = await manager.startTurn({ chatId: "chat-1", content: "first", model: "opencode/big-pickle" })
+    await waitFor(() => Boolean(firstSetModelRequest))
+    await firstTurn.interrupt()
+    const secondTurn = await manager.startTurn({ chatId: "chat-1", content: "second", model: "opencode/deepseek-v4-flash-free" })
+    process.writeAgentMessage({
+      jsonrpc: "2.0",
+      id: firstSetModelRequest.id,
+      error: { code: -32000, message: "stale model switch failed" },
+    })
+
+    const events = await collectStream(secondTurn.stream)
+    const assistant = events.find((event) => event.type === "transcript" && event.entry.kind === "assistant_text")
+    const result = events.find((event) => event.type === "transcript" && event.entry.kind === "result")
+
+    expect(assistant?.entry.text).toBe("second turn ok")
+    expect(result?.entry).toMatchObject({
+      kind: "result",
+      subtype: "success",
+      isError: false,
+    })
+  })
+
   test("resets OpenCode to the configured default model", async () => {
     const process = new FakeHermesProcess((message, child) => {
       if (message.method === "initialize") {
@@ -697,6 +750,47 @@ describe("HermesAcpManager", () => {
       subtype: "error",
       isError: true,
       result: "OpenCode returned no output. Last OpenCode log: missing API key",
+    })
+  })
+
+  test("does not report plan-only OpenCode turns as no-output errors", async () => {
+    const process = new FakeHermesProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } })
+      } else if (message.method === "session/new") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { sessionId: "opencode-session-1" } })
+      } else if (message.method === "session/set_model") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: {} })
+      } else if (message.method === "session/prompt") {
+        child.writeAgentMessage({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "opencode-session-1",
+            update: {
+              sessionUpdate: "plan",
+              entries: [
+                { content: "Inspect auth config", priority: "high", status: "in_progress" },
+              ],
+            },
+          },
+        })
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } })
+      }
+    })
+    const manager = new OpenCodeAcpManager({ spawnProcess: () => process as never })
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+
+    const turn = await manager.startTurn({ chatId: "chat-1", content: "make a plan", model: "opencode/big-pickle" })
+    const events = await collectStream(turn.stream)
+    const plan = events.find((event) => event.type === "transcript" && event.entry.kind === "tool_call")
+    const result = events.find((event) => event.type === "transcript" && event.entry.kind === "result")
+
+    expect(plan?.entry.tool.toolKind).toBe("todo_write")
+    expect(result?.entry).toMatchObject({
+      kind: "result",
+      subtype: "success",
+      isError: false,
     })
   })
 })

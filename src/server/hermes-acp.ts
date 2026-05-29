@@ -64,6 +64,7 @@ interface PendingTurn {
   resolved: boolean
   assistantText: string
   bufferedAssistantText: string
+  hasVisibleOutput: boolean
 }
 
 interface SessionContext {
@@ -590,6 +591,7 @@ export class HermesAcpManager {
       resolved: false,
       assistantText: "",
       bufferedAssistantText: "",
+      hasVisibleOutput: false,
     }
     context.pendingTurn = pendingTurn
 
@@ -614,7 +616,11 @@ export class HermesAcpManager {
           this.handlePromptCompleted(context, response)
         }
       })
-      .catch((error) => this.failTurn(context, errorMessage(error)))
+      .catch((error) => {
+        if (context.pendingTurn === pendingTurn && !pendingTurn.resolved) {
+          this.failTurn(context, errorMessage(error))
+        }
+      })
 
     return {
       provider: this.providerConfig.provider,
@@ -794,6 +800,7 @@ export class HermesAcpManager {
         const hidden = this.providerConfig.provider === "hermes" && isHermesInternalAssistantText(text)
         if (!hidden) {
           pendingTurn.assistantText += text
+          pendingTurn.hasVisibleOutput = true
         }
         if (!hidden && this.providerConfig.provider === "opencode") {
           pendingTurn.bufferedAssistantText += text
@@ -833,6 +840,7 @@ export class HermesAcpManager {
           : []
         if (entries.length === 0) return
         this.flushBufferedAssistantText(pendingTurn)
+        pendingTurn.hasVisibleOutput = true
         pendingTurn.queue.push({
           type: "transcript",
           entry: planToolCall(this.providerConfig, entries),
@@ -872,6 +880,7 @@ export class HermesAcpManager {
   private handleToolUpdate(pendingTurn: PendingTurn, update: ToolCallUpdatePayload) {
     if (!pendingTurn.startedToolIds.has(update.toolCallId)) {
       pendingTurn.startedToolIds.add(update.toolCallId)
+      pendingTurn.hasVisibleOutput = true
       pendingTurn.queue.push({
         type: "transcript",
         entry: toolCallEntry(this.providerConfig, update),
@@ -943,7 +952,7 @@ export class HermesAcpManager {
     response: PromptResponse
   ) {
     if (response.stopReason !== "end_turn") return null
-    if (pendingTurn.assistantText.trim().length > 0 || pendingTurn.startedToolIds.size > 0) return null
+    if (pendingTurn.hasVisibleOutput) return null
     const stderr = context.stderrLines.at(-1)
     return stderr
       ? `${this.providerConfig.displayName} returned no output. Last ${this.providerConfig.displayName} log: ${stderr}`
