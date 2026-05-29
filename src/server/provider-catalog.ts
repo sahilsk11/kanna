@@ -30,6 +30,7 @@ const HARD_CODED_CODEX_MODELS: ProviderModelOption[] = [
   { id: "gpt-5.3-codex", label: "GPT-5.3 Codex", supportsEffort: false },
   { id: "gpt-5.3-codex-spark", label: "GPT-5.3 Codex Spark", supportsEffort: false },
 ]
+const DEFAULT_OPENCODE_MODEL_PROVIDERS = ["opencode-go"] as const
 
 function buildServerProviders(openCodeModels?: ProviderModelOption[]): ProviderCatalogEntry[] {
   return PROVIDERS.map((provider) => {
@@ -53,13 +54,17 @@ function buildServerProviders(openCodeModels?: ProviderModelOption[]): ProviderC
 
 export let SERVER_PROVIDERS: ProviderCatalogEntry[] = buildServerProviders()
 
-export function parseOpenCodeModelsOutput(output: string): ProviderModelOption[] {
+export function parseOpenCodeModelsOutput(output: string, providerIds?: readonly string[]): ProviderModelOption[] {
   const seen = new Set<string>()
   const models: ProviderModelOption[] = []
+  const allowedProviders = providerIds?.length ? new Set(providerIds) : null
 
   for (const line of output.split(/\r?\n/)) {
     const modelId = line.replace(/\x1b\[[0-9;]*m/g, "").trim().split(/\s+/)[0]
     if (!modelId || !modelId.includes("/") || seen.has(modelId)) {
+      continue
+    }
+    if (allowedProviders && !allowedProviders.has(modelId.slice(0, modelId.indexOf("/")))) {
       continue
     }
     seen.add(modelId)
@@ -73,15 +78,9 @@ export function parseOpenCodeModelsOutput(output: string): ProviderModelOption[]
   return models
 }
 
-export async function discoverOpenCodeModels(options?: {
-  command?: string
-  timeoutMs?: number
-}): Promise<ProviderModelOption[]> {
-  const command = options?.command ?? "opencode"
-  const timeoutMs = options?.timeoutMs ?? 10_000
-
+async function runOpenCodeModelsCommand(command: string, args: string[], timeoutMs: number): Promise<string> {
   return await new Promise((resolve, reject) => {
-    const child = spawn(command, ["models"], {
+    const child = spawn(command, args, {
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     })
@@ -92,7 +91,7 @@ export async function discoverOpenCodeModels(options?: {
       if (settled) return
       settled = true
       child.kill("SIGTERM")
-      reject(new Error(`Timed out while running ${command} models`))
+      reject(new Error(`Timed out while running ${command} ${args.join(" ")}`))
     }, timeoutMs)
 
     child.stdout?.setEncoding("utf8")
@@ -114,12 +113,25 @@ export async function discoverOpenCodeModels(options?: {
       settled = true
       clearTimeout(timeout)
       if (code !== 0) {
-        reject(new Error(`${command} models exited with status ${code}${stderr.trim() ? `: ${stderr.trim()}` : ""}`))
+        reject(new Error(`${command} ${args.join(" ")} exited with status ${code}${stderr.trim() ? `: ${stderr.trim()}` : ""}`))
         return
       }
-      resolve(parseOpenCodeModelsOutput(stdout))
+      resolve(stdout)
     })
   })
+}
+
+export async function discoverOpenCodeModels(options?: {
+  command?: string
+  timeoutMs?: number
+  providerIds?: readonly string[]
+}): Promise<ProviderModelOption[]> {
+  const command = options?.command ?? "opencode"
+  const timeoutMs = options?.timeoutMs ?? 5_000
+  const providerIds = options?.providerIds ?? DEFAULT_OPENCODE_MODEL_PROVIDERS
+  const output = await runOpenCodeModelsCommand(command, ["models"], timeoutMs)
+
+  return parseOpenCodeModelsOutput(output, providerIds)
 }
 
 export async function refreshServerProviderCatalog(options?: {
