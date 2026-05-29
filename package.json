@@ -11,6 +11,7 @@
     "chat",
     "ui",
     "agent",
+    "opencode",
     "anthropic",
     "bun",
     "react"

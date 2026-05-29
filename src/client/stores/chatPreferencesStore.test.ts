@@ -72,6 +72,11 @@ describe("migrateChatPreferencesState", () => {
           modelOptions: {},
           planMode: false,
         },
+        opencode: {
+          model: "opencode-configured-default",
+          modelOptions: {},
+          planMode: false,
+        },
       },
       chatStates: {},
       legacyComposerState: {

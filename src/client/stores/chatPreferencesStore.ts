@@ -4,10 +4,13 @@ import {
   DEFAULT_CODEX_MODEL_OPTIONS,
   DEFAULT_HERMES_MODEL,
   DEFAULT_HERMES_MODEL_OPTIONS,
+  DEFAULT_OPENCODE_MODEL,
+  DEFAULT_OPENCODE_MODEL_OPTIONS,
   normalizeClaudeContextWindow,
   normalizeClaudeModelId,
   normalizeCodexModelId,
   normalizeHermesModelId,
+  normalizeOpenCodeModelId,
   isClaudeReasoningEffort,
   isCodexReasoningEffort,
   supportsClaudeMaxReasoningEffort,
@@ -17,6 +20,7 @@ import {
   type CodexModelOptions,
   type DefaultProviderPreference,
   type HermesModelOptions,
+  type OpenCodeModelOptions,
   type ProviderPreference,
   type ProviderModelOptionsByProvider,
 } from "../../shared/types"
@@ -42,6 +46,12 @@ export type ComposerState =
     modelOptions: HermesModelOptions
     planMode: boolean
   }
+  | {
+    provider: "opencode"
+    model: string
+    modelOptions: OpenCodeModelOptions
+    planMode: boolean
+  }
 
 export const NEW_CHAT_COMPOSER_ID = "__new__"
 
@@ -65,6 +75,11 @@ type LegacyPersistedChatPreferencesState = Partial<{
       modelOptions?: Partial<HermesModelOptions>
       planMode?: boolean
     }
+    opencode?: {
+      model?: string
+      modelOptions?: Partial<OpenCodeModelOptions>
+      planMode?: boolean
+    }
   }
   composerState: PersistedComposerState
   liveProvider: AgentProvider
@@ -84,6 +99,11 @@ type LegacyPersistedChatPreferencesState = Partial<{
     hermes?: {
       model?: string
       modelOptions?: Partial<HermesModelOptions>
+      planMode?: boolean
+    }
+    opencode?: {
+      model?: string
+      modelOptions?: Partial<OpenCodeModelOptions>
       planMode?: boolean
     }
   }
@@ -110,6 +130,12 @@ type PersistedComposerState =
     modelOptions?: Partial<HermesModelOptions>
     planMode?: boolean
   }
+  | {
+    provider: "opencode"
+    model?: string
+    modelOptions?: Partial<OpenCodeModelOptions>
+    planMode?: boolean
+  }
 
 type PersistedChatPreferencesState = Pick<
   ChatPreferencesState,
@@ -117,7 +143,7 @@ type PersistedChatPreferencesState = Pick<
 > & LegacyPersistedChatPreferencesState
 
 export function normalizeDefaultProvider(value?: string): DefaultProviderPreference {
-  if (value === "claude" || value === "codex" || value === "hermes") return value
+  if (value === "claude" || value === "codex" || value === "hermes" || value === "opencode") return value
   return "last_used"
 }
 
@@ -181,6 +207,18 @@ export function normalizeHermesPreference(value?: {
   }
 }
 
+export function normalizeOpenCodePreference(value?: {
+  model?: string
+  modelOptions?: Partial<OpenCodeModelOptions>
+  planMode?: boolean
+}): ProviderPreference<OpenCodeModelOptions> {
+  return {
+    model: normalizeOpenCodeModelId(value?.model),
+    modelOptions: { ...DEFAULT_OPENCODE_MODEL_OPTIONS },
+    planMode: Boolean(value?.planMode),
+  }
+}
+
 function forcePersistedCodexPreference<T extends {
   model?: string
   effort?: string
@@ -232,6 +270,11 @@ export function createDefaultProviderDefaults(): ChatProviderPreferences {
       modelOptions: { ...DEFAULT_HERMES_MODEL_OPTIONS },
       planMode: false,
     },
+    opencode: {
+      model: DEFAULT_OPENCODE_MODEL,
+      modelOptions: { ...DEFAULT_OPENCODE_MODEL_OPTIONS },
+      planMode: false,
+    },
   }
 }
 
@@ -253,11 +296,17 @@ export function normalizeProviderDefaults(value?: {
     modelOptions?: Partial<HermesModelOptions>
     planMode?: boolean
   }
+  opencode?: {
+    model?: string
+    modelOptions?: Partial<OpenCodeModelOptions>
+    planMode?: boolean
+  }
 }): ChatProviderPreferences {
   return {
     claude: normalizeClaudePreference(value?.claude),
     codex: normalizeCodexPreference(value?.codex),
     hermes: normalizeHermesPreference(value?.hermes),
+    opencode: normalizeOpenCodePreference(value?.opencode),
   }
 }
 
@@ -302,6 +351,15 @@ function composerFromProviderDefaults(
         planMode: preference.planMode,
       }
     }
+    case "opencode": {
+      const preference = providerDefaults.opencode
+      return {
+        provider: "opencode",
+        model: preference.model,
+        modelOptions: { ...preference.modelOptions },
+        planMode: preference.planMode,
+      }
+    }
   }
 }
 
@@ -328,6 +386,13 @@ function cloneComposerState(state: ComposerState): ComposerState {
         modelOptions: { ...state.modelOptions },
         planMode: state.planMode,
       }
+    case "opencode":
+      return {
+        provider: "opencode",
+        model: state.model,
+        modelOptions: { ...state.modelOptions },
+        planMode: state.planMode,
+      }
   }
 }
 
@@ -345,7 +410,11 @@ function sameComposerState(left: ComposerState | undefined, right: ComposerState
       && left.modelOptions.fastMode === right.modelOptions.fastMode
   }
 
-  return left.provider === "hermes" && right.provider === "hermes"
+  if (left.provider === "hermes" && right.provider === "hermes") {
+    return true
+  }
+
+  return left.provider === "opencode" && right.provider === "opencode"
 }
 
 function normalizeComposerState(
@@ -384,6 +453,16 @@ function normalizeComposerState(
     }
   }
 
+  if (value?.provider === "opencode") {
+    const preference = normalizeOpenCodePreference(value)
+    return {
+      provider: "opencode",
+      model: preference.model,
+      modelOptions: preference.modelOptions,
+      planMode: preference.planMode,
+    }
+  }
+
   if (legacyLiveProvider === "claude") {
     const preference = normalizeClaudePreference(legacyLivePreferences?.claude)
     return {
@@ -408,6 +487,16 @@ function normalizeComposerState(
     const preference = normalizeHermesPreference(legacyLivePreferences?.hermes)
     return {
       provider: "hermes",
+      model: preference.model,
+      modelOptions: preference.modelOptions,
+      planMode: preference.planMode,
+    }
+  }
+
+  if (legacyLiveProvider === "opencode") {
+    const preference = normalizeOpenCodePreference(legacyLivePreferences?.opencode)
+    return {
+      provider: "opencode",
       model: preference.model,
       modelOptions: preference.modelOptions,
       planMode: preference.planMode,
@@ -510,7 +599,7 @@ interface ChatPreferencesState {
   setChatComposerModel: (chatId: string, model: string) => void
   setChatComposerModelOptions: (
     chatId: string,
-    modelOptions: Partial<ClaudeModelOptions> | Partial<CodexModelOptions> | Partial<HermesModelOptions>
+    modelOptions: Partial<ClaudeModelOptions> | Partial<CodexModelOptions> | Partial<HermesModelOptions> | Partial<OpenCodeModelOptions>
   ) => void
   setChatComposerPlanMode: (chatId: string, planMode: boolean) => void
   resetChatComposerFromProvider: (chatId: string, provider: AgentProvider) => void
@@ -593,10 +682,15 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
                   ...state.providerDefaults.codex,
                   model,
                 })
-                : normalizeHermesPreference({
-                  ...state.providerDefaults.hermes,
-                  model,
-                }),
+                : provider === "hermes"
+                  ? normalizeHermesPreference({
+                    ...state.providerDefaults.hermes,
+                    model,
+                  })
+                  : normalizeOpenCodePreference({
+                    ...state.providerDefaults.opencode,
+                    model,
+                  }),
           },
         })),
       setProviderDefaultModelOptions: (provider, modelOptions) =>
@@ -619,13 +713,21 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
                     ...modelOptions as Partial<CodexModelOptions>,
                   },
                 })
-                : normalizeHermesPreference({
-                  ...state.providerDefaults.hermes,
-                  modelOptions: {
-                    ...state.providerDefaults.hermes.modelOptions,
-                    ...modelOptions as Partial<HermesModelOptions>,
-                  },
-                }),
+                : provider === "hermes"
+                  ? normalizeHermesPreference({
+                    ...state.providerDefaults.hermes,
+                    modelOptions: {
+                      ...state.providerDefaults.hermes.modelOptions,
+                      ...modelOptions as Partial<HermesModelOptions>,
+                    },
+                  })
+                  : normalizeOpenCodePreference({
+                    ...state.providerDefaults.opencode,
+                    modelOptions: {
+                      ...state.providerDefaults.opencode.modelOptions,
+                      ...modelOptions as Partial<OpenCodeModelOptions>,
+                    },
+                  }),
           },
         })),
       setProviderDefaultPlanMode: (provider, planMode) =>
@@ -675,11 +777,15 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
               : composerState.provider === "codex"
                 ? cloneComposerState(composerState)
                 : {
-                  provider: "hermes",
-                  model: normalizeHermesPreference(composerState).model,
-                  modelOptions: normalizeHermesPreference(composerState).modelOptions,
+                  provider: composerState.provider,
+                  model: composerState.provider === "hermes"
+                    ? normalizeHermesPreference(composerState).model
+                    : normalizeOpenCodePreference(composerState).model,
+                  modelOptions: composerState.provider === "hermes"
+                    ? normalizeHermesPreference(composerState).modelOptions
+                    : normalizeOpenCodePreference(composerState).modelOptions,
                   planMode: composerState.planMode,
-                },
+                } as ComposerState,
           },
         })),
       setChatComposerProvider: (chatId, provider) =>
@@ -718,6 +824,19 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
                   model,
                 }).model,
                 modelOptions: normalizeHermesPreference({
+                  ...composerState,
+                  model,
+                }).modelOptions,
+                planMode: composerState.planMode,
+              }
+            case "opencode":
+              return {
+                provider: "opencode",
+                model: normalizeOpenCodePreference({
+                  ...composerState,
+                  model,
+                }).model,
+                modelOptions: normalizeOpenCodePreference({
                   ...composerState,
                   model,
                 }).modelOptions,
@@ -763,6 +882,19 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
                   modelOptions: {
                     ...composerState.modelOptions,
                     ...modelOptions as Partial<HermesModelOptions>,
+                  },
+                }).modelOptions,
+                planMode: composerState.planMode,
+              }
+            case "opencode":
+              return {
+                provider: "opencode",
+                model: composerState.model,
+                modelOptions: normalizeOpenCodePreference({
+                  ...composerState,
+                  modelOptions: {
+                    ...composerState.modelOptions,
+                    ...modelOptions as Partial<OpenCodeModelOptions>,
                   },
                 }).modelOptions,
                 planMode: composerState.planMode,

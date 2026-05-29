@@ -51,6 +51,14 @@ export function mergeAppSettingsPatch(
           ...patch.providerDefaults?.hermes?.modelOptions,
         },
       },
+      opencode: {
+        ...settings.providerDefaults.opencode,
+        ...patch.providerDefaults?.opencode,
+        modelOptions: {
+          ...settings.providerDefaults.opencode.modelOptions,
+          ...patch.providerDefaults?.opencode?.modelOptions,
+        },
+      },
     },
   }
 }

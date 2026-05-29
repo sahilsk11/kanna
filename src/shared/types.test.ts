@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import {
   DEFAULT_HERMES_MODEL,
+  DEFAULT_OPENCODE_MODEL,
   normalizeClaudeModelId,
   normalizeCodexModelId,
   normalizeHermesModelId,
+  normalizeOpenCodeModelId,
   supportsClaudeMaxReasoningEffort,
 } from "./types"
 
@@ -23,6 +25,12 @@ describe("shared model normalization", () => {
     expect(normalizeHermesModelId()).toBe(DEFAULT_HERMES_MODEL)
     expect(normalizeHermesModelId("default")).toBe(DEFAULT_HERMES_MODEL)
     expect(normalizeHermesModelId("gpt-5.5")).toBe(DEFAULT_HERMES_MODEL)
+  })
+
+  test("normalizes OpenCode defaults while preserving model ids from discovery", () => {
+    expect(normalizeOpenCodeModelId()).toBe(DEFAULT_OPENCODE_MODEL)
+    expect(normalizeOpenCodeModelId("default")).toBe(DEFAULT_OPENCODE_MODEL)
+    expect(normalizeOpenCodeModelId("opencode/kimi-k2.5")).toBe("opencode/kimi-k2.5")
   })
 
   test("uses declarative metadata for Claude max-effort support", () => {

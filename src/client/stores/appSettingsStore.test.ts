@@ -35,6 +35,11 @@ function settingsSnapshot(): AppSettingsSnapshot {
         modelOptions: {},
         planMode: false,
       },
+      opencode: {
+        model: "opencode-configured-default",
+        modelOptions: {},
+        planMode: false,
+      },
     },
     warning: null,
     filePathDisplay: "~/.kanna/data/settings.json",
@@ -60,5 +65,6 @@ describe("mergeAppSettingsPatch", () => {
     })
     expect(merged.providerDefaults.codex).toEqual(settingsSnapshot().providerDefaults.codex)
     expect(merged.providerDefaults.claude).toEqual(settingsSnapshot().providerDefaults.claude)
+    expect(merged.providerDefaults.opencode).toEqual(settingsSnapshot().providerDefaults.opencode)
   })
 })

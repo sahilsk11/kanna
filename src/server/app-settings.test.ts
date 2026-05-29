@@ -57,6 +57,11 @@ function expectedSettingsSnapshot(filePath: string, overrides: Partial<AppSettin
         modelOptions: {},
         planMode: false,
       },
+      opencode: {
+        model: "opencode-configured-default",
+        modelOptions: {},
+        planMode: false,
+      },
     },
     warning: null,
     filePathDisplay: filePath,

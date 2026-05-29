@@ -27,7 +27,6 @@ import {
   DEFAULT_KEYBINDINGS,
   DEFAULT_OPENAI_SDK_MODEL,
   DEFAULT_OPENROUTER_SDK_MODEL,
-  PROVIDERS,
   type AgentProvider,
   type InstalledSkillSummary,
   type KeybindingAction,
@@ -841,6 +840,7 @@ export function SettingsPage() {
   const llmProvider = state.llmProvider
   const defaultProvider = useChatPreferencesStore((store) => store.defaultProvider)
   const providerDefaults = useChatPreferencesStore((store) => store.providerDefaults)
+  const providerCatalog = state.availableProviders
   const setDefaultProvider = useChatPreferencesStore((store) => store.setDefaultProvider)
   const setProviderDefaultModel = useChatPreferencesStore((store) => store.setProviderDefaultModel)
   const setProviderDefaultModelOptions = useChatPreferencesStore((store) => store.setProviderDefaultModelOptions)
@@ -1658,7 +1658,7 @@ export function SettingsPage() {
                             <SelectItem value="last_used">
                               Last Used
                             </SelectItem>
-                            {PROVIDERS.map((provider) => (
+                            {providerCatalog.map((provider) => (
                               <SelectItem key={provider.id} value={provider.id}>
                                 {provider.label}
                               </SelectItem>
@@ -1675,7 +1675,7 @@ export function SettingsPage() {
                     >
                       <div className="max-w-[420px]">
                         <ChatPreferenceControls
-                          availableProviders={PROVIDERS}
+                          availableProviders={providerCatalog}
                           selectedProvider="claude"
                           showProviderPicker={false}
                           providerLocked
@@ -1706,7 +1706,7 @@ export function SettingsPage() {
                     >
                       <div className="max-w-[420px]">
                         <ChatPreferenceControls
-                          availableProviders={PROVIDERS}
+                          availableProviders={providerCatalog}
                           selectedProvider="codex"
                           showProviderPicker={false}
                           providerLocked
@@ -1737,7 +1737,7 @@ export function SettingsPage() {
                     >
                       <div className="max-w-[420px]">
                         <ChatPreferenceControls
-                          availableProviders={PROVIDERS}
+                          availableProviders={providerCatalog}
                           selectedProvider="hermes"
                           showProviderPicker={false}
                           providerLocked
@@ -1749,6 +1749,31 @@ export function SettingsPage() {
                           onModelOptionChange={() => {}}
                           planMode={providerDefaults.hermes.planMode}
                           onPlanModeChange={(planMode) => handleProviderDefaultPlanModeChange("hermes", planMode)}
+                          includePlanMode
+                          className="justify-start flex-wrap"
+                        />
+                      </div>
+                    </SettingsRow>
+
+                    <SettingsRow
+                      title="OpenCode Defaults"
+                      description="Saved defaults when using OpenCode."
+                      alignStart
+                    >
+                      <div className="max-w-[420px]">
+                        <ChatPreferenceControls
+                          availableProviders={providerCatalog}
+                          selectedProvider="opencode"
+                          showProviderPicker={false}
+                          providerLocked
+                          model={providerDefaults.opencode.model}
+                          modelOptions={providerDefaults.opencode.modelOptions}
+                          onModelChange={(_, model) => {
+                            handleProviderDefaultModelChange("opencode", model)
+                          }}
+                          onModelOptionChange={() => {}}
+                          planMode={providerDefaults.opencode.planMode}
+                          onPlanModeChange={(planMode) => handleProviderDefaultPlanModeChange("opencode", planMode)}
                           includePlanMode
                           className="justify-start flex-wrap"
                         />

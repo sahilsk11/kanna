@@ -16,6 +16,7 @@ import { openExternal } from "./external-open"
 import { KeybindingsManager } from "./keybindings"
 import { killLocalHttpServer, listLocalHttpServers } from "./local-http-servers"
 import { ensureProjectDirectory, getDefaultProjectPath, resolveLocalPath, validateExistingProjectDirectory } from "./paths"
+import { SERVER_PROVIDERS } from "./provider-catalog"
 import { readProjectQuickActions, writeProjectQuickActions } from "./project-quick-actions"
 import { writeStandaloneTranscriptExport } from "./standalone-export"
 import { TerminalManager } from "./terminal-manager"
@@ -488,6 +489,11 @@ export function createWsRouter({
         modelOptions: {},
         planMode: false,
       },
+      opencode: {
+        model: "opencode-configured-default",
+        modelOptions: {},
+        planMode: false,
+      },
     },
     warning: null,
     filePathDisplay: "~/.kanna/data/settings.json",
@@ -528,24 +534,37 @@ export function createWsRouter({
           ...patch.providerDefaults?.hermes?.modelOptions,
         },
       },
+      opencode: {
+        ...snapshot.providerDefaults.opencode,
+        ...patch.providerDefaults?.opencode,
+        modelOptions: {
+          ...snapshot.providerDefaults.opencode.modelOptions,
+          ...patch.providerDefaults?.opencode?.modelOptions,
+        },
+      },
     },
   })
+  const withProviderCatalog = (snapshot: AppSettingsSnapshot): AppSettingsSnapshot => ({
+    ...snapshot,
+    availableProviders: [...SERVER_PROVIDERS],
+  })
   const resolvedAppSettings = {
-    getSnapshot: () => appSettings?.getSnapshot() ?? fallbackAppSettingsSnapshot,
+    getSnapshot: () => withProviderCatalog(appSettings?.getSnapshot() ?? fallbackAppSettingsSnapshot),
     write: async (value: { analyticsEnabled: boolean }) => {
-      if (appSettings) return await appSettings.write(value)
+      if (appSettings) return withProviderCatalog(await appSettings.write(value))
       fallbackAppSettingsSnapshot = { ...fallbackAppSettingsSnapshot, analyticsEnabled: value.analyticsEnabled }
-      return fallbackAppSettingsSnapshot
+      return withProviderCatalog(fallbackAppSettingsSnapshot)
     },
     writePatch: async (patch: AppSettingsPatch) => {
-      if (appSettings?.writePatch) return await appSettings.writePatch(patch)
+      if (appSettings?.writePatch) return withProviderCatalog(await appSettings.writePatch(patch))
       if (appSettings && patch.analyticsEnabled !== undefined && Object.keys(patch).length === 1) {
-        return await appSettings.write({ analyticsEnabled: patch.analyticsEnabled })
+        return withProviderCatalog(await appSettings.write({ analyticsEnabled: patch.analyticsEnabled }))
       }
       fallbackAppSettingsSnapshot = mergeAppSettingsPatch(appSettings?.getSnapshot() ?? fallbackAppSettingsSnapshot, patch)
-      return fallbackAppSettingsSnapshot
+      return withProviderCatalog(fallbackAppSettingsSnapshot)
     },
-    onChange: (listener: (snapshot: AppSettingsSnapshot) => void) => appSettings?.onChange?.(listener) ?? (() => {}),
+    onChange: (listener: (snapshot: AppSettingsSnapshot) => void) =>
+      appSettings?.onChange?.((snapshot) => listener(withProviderCatalog(snapshot))) ?? (() => {}),
   }
   const resolvedAnalytics = analytics ?? NoopAnalyticsReporter
 
