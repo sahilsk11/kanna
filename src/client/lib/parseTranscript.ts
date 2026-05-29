@@ -75,7 +75,10 @@ export function processTranscriptMessages(entries: TranscriptEntry[]): HydratedT
         })
         break
       case "assistant_text":
-        if (!entry.hidden) {
+        if (entry.hidden) {
+          break
+        }
+        {
           const previous = messages[messages.length - 1]
           if (previous?.kind === "assistant_text" && !previous.hidden) {
             previous.text += entry.text

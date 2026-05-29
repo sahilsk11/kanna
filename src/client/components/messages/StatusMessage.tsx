@@ -8,6 +8,7 @@ interface Props {
 
 const STATUS_LABELS: Record<string, string> = {
   compacting: "Compacting...",
+  thinking: "Thinking...",
 }
 
 export function StatusMessage({ message }: Props) {
