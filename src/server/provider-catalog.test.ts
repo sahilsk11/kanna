@@ -5,6 +5,7 @@ import {
   normalizeCodexModelOptions,
   normalizeHermesModelOptions,
   normalizeServerModel,
+  parseOpenCodeModelsOutput,
 } from "./provider-catalog"
 import { DEFAULT_HERMES_MODEL, resolveClaudeApiModelId } from "../shared/types"
 
@@ -66,6 +67,18 @@ describe("provider catalog normalization", () => {
 
   test("normalizes Hermes to empty configured-default model options", () => {
     expect(normalizeHermesModelOptions()).toEqual({})
+  })
+
+  test("parses OpenCode model ids from CLI output", () => {
+    expect(parseOpenCodeModelsOutput(`
+opencode/big-pickle
+opencode-go/kimi-k2.5
+opencode-go/kimi-k2.5
+not-a-model
+    `)).toEqual([
+      { id: "opencode/big-pickle", label: "opencode/big-pickle", supportsEffort: false },
+      { id: "opencode-go/kimi-k2.5", label: "opencode-go/kimi-k2.5", supportsEffort: false },
+    ])
   })
 
   test("resolves Claude API model ids for 1m context window", () => {

@@ -20,7 +20,7 @@ import { NoopAnalyticsReporter } from "./analytics"
 import { CodexAppServerManager } from "./codex-app-server"
 import { type GenerateChatTitleResult, generateTitleForChatDetailed } from "./generate-title"
 import type { HarnessEvent, HarnessToolRequest, HarnessTurn } from "./harness-types"
-import { HermesAcpManager } from "./hermes-acp"
+import { HermesAcpManager, OpenCodeAcpManager } from "./hermes-acp"
 import {
   codexServiceTierFromModelOptions,
   getServerProviderCatalog,
@@ -108,6 +108,7 @@ interface AgentCoordinatorArgs {
   analytics?: AnalyticsReporter
   codexManager?: CodexAppServerManager
   hermesManager?: HermesAcpManager
+  opencodeManager?: OpenCodeAcpManager
   generateTitle?: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
   startClaudeSession?: (args: {
     localPath: string
@@ -688,6 +689,7 @@ export class AgentCoordinator {
   private readonly analytics: AnalyticsReporter
   private readonly codexManager: CodexAppServerManager
   private readonly hermesManager: HermesAcpManager
+  private readonly opencodeManager: OpenCodeAcpManager
   private readonly generateTitle: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
   private readonly startClaudeSessionFn: NonNullable<AgentCoordinatorArgs["startClaudeSession"]>
   private reportBackgroundError: ((message: string) => void) | null = null
@@ -701,6 +703,7 @@ export class AgentCoordinator {
     this.analytics = args.analytics ?? NoopAnalyticsReporter
     this.codexManager = args.codexManager ?? new CodexAppServerManager()
     this.hermesManager = args.hermesManager ?? new HermesAcpManager()
+    this.opencodeManager = args.opencodeManager ?? new OpenCodeAcpManager()
     this.generateTitle = args.generateTitle ?? generateTitleForChatDetailed
     this.startClaudeSessionFn = args.startClaudeSession ?? startClaudeSession
   }
@@ -763,6 +766,7 @@ export class AgentCoordinator {
       this.claudeSessions.delete(chatId)
     }
     this.hermesManager.stopSession(chatId)
+    this.opencodeManager.stopSession(chatId)
     this.emitStateChange(chatId)
   }
 
@@ -779,6 +783,7 @@ export class AgentCoordinator {
     }
     this.codexManager.stopAll()
     this.hermesManager.stopAll()
+    this.opencodeManager.stopAll()
     this.emitStateChange()
   }
 
@@ -801,6 +806,15 @@ export class AgentCoordinator {
     }
 
     if (provider === "hermes") {
+      return {
+        model: normalizeServerModel(provider, options.model),
+        effort: undefined,
+        serviceTier: undefined,
+        planMode: false,
+      }
+    }
+
+    if (provider === "opencode") {
       return {
         model: normalizeServerModel(provider, options.model),
         effort: undefined,
@@ -1019,12 +1033,13 @@ export class AgentCoordinator {
         model: args.model,
       })
     } else {
+      const acpManager = args.provider === "opencode" ? this.opencodeManager : this.hermesManager
       logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
         chatId: args.chatId,
         provider: args.provider,
         model: args.model,
       })
-      const sessionToken = await this.hermesManager.startSession({
+      const sessionToken = await acpManager.startSession({
         chatId: args.chatId,
         cwd: project.localPath,
         sessionToken: chat.sessionToken,
@@ -1038,7 +1053,7 @@ export class AgentCoordinator {
         provider: args.provider,
         model: args.model,
       })
-      turn = await this.hermesManager.startTurn({
+      turn = await acpManager.startTurn({
         chatId: args.chatId,
         content: buildPromptText(args.content, args.attachments),
         model: args.model,

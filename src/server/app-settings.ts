@@ -9,12 +9,15 @@ import {
   DEFAULT_CODEX_MODEL_OPTIONS,
   DEFAULT_HERMES_MODEL,
   DEFAULT_HERMES_MODEL_OPTIONS,
+  DEFAULT_OPENCODE_MODEL,
+  DEFAULT_OPENCODE_MODEL_OPTIONS,
   isClaudeReasoningEffort,
   isCodexReasoningEffort,
   normalizeClaudeContextWindow,
   normalizeClaudeModelId,
   normalizeCodexModelId,
   normalizeHermesModelId,
+  normalizeOpenCodeModelId,
   supportsClaudeMaxReasoningEffort,
   type AppSettingsPatch,
   type AppSettingsSnapshot,
@@ -27,6 +30,7 @@ import {
   type DefaultProviderPreference,
   type EditorPreset,
   type HermesModelOptions,
+  type OpenCodeModelOptions,
   type ProviderPreference,
   type SessionGroupingPreference,
 } from "../shared/types"
@@ -52,6 +56,7 @@ interface AppSettingsFile {
     claude?: Partial<ProviderPreference<Partial<ClaudeModelOptions>>> & { effort?: unknown }
     codex?: Partial<ProviderPreference<Partial<CodexModelOptions>>> & { effort?: unknown }
     hermes?: Partial<ProviderPreference<Partial<HermesModelOptions>>>
+    opencode?: Partial<ProviderPreference<Partial<OpenCodeModelOptions>>>
   }
 }
 
@@ -120,6 +125,11 @@ function createDefaultProviderDefaults(): ChatProviderPreferences {
       modelOptions: { ...DEFAULT_HERMES_MODEL_OPTIONS },
       planMode: false,
     },
+    opencode: {
+      model: DEFAULT_OPENCODE_MODEL,
+      modelOptions: { ...DEFAULT_OPENCODE_MODEL_OPTIONS },
+      planMode: false,
+    },
   }
 }
 
@@ -159,7 +169,7 @@ function normalizeChatSoundId(value: unknown): ChatSoundId {
 }
 
 function normalizeDefaultProvider(value: unknown): DefaultProviderPreference {
-  return value === "claude" || value === "codex" || value === "hermes" || value === "last_used" ? value : "last_used"
+  return value === "claude" || value === "codex" || value === "hermes" || value === "opencode" || value === "last_used" ? value : "last_used"
 }
 
 function normalizeEditorPreset(value: unknown): EditorPreset {
@@ -231,12 +241,24 @@ function normalizeHermesPreference(value?: {
   }
 }
 
+function normalizeOpenCodePreference(value?: {
+  model?: unknown
+  planMode?: unknown
+}): ProviderPreference<OpenCodeModelOptions> {
+  return {
+    model: normalizeOpenCodeModelId(typeof value?.model === "string" ? value.model : undefined),
+    modelOptions: { ...DEFAULT_OPENCODE_MODEL_OPTIONS },
+    planMode: value?.planMode === true,
+  }
+}
+
 function normalizeProviderDefaults(value: AppSettingsFile["providerDefaults"] | undefined): ChatProviderPreferences {
   const defaults = createDefaultProviderDefaults()
   return {
     claude: normalizeClaudePreference(value?.claude ?? defaults.claude),
     codex: normalizeCodexPreference(value?.codex ?? defaults.codex),
     hermes: normalizeHermesPreference(value?.hermes ?? defaults.hermes),
+    opencode: normalizeOpenCodePreference(value?.opencode ?? defaults.opencode),
   }
 }
 
@@ -386,6 +408,14 @@ function applyPatch(state: AppSettingsState, patch: AppSettingsPatch): AppSettin
         modelOptions: {
           ...state.providerDefaults.hermes.modelOptions,
           ...patch.providerDefaults?.hermes?.modelOptions,
+        },
+      },
+      opencode: {
+        ...state.providerDefaults.opencode,
+        ...patch.providerDefaults?.opencode,
+        modelOptions: {
+          ...state.providerDefaults.opencode.modelOptions,
+          ...patch.providerDefaults?.opencode?.modelOptions,
         },
       },
     },

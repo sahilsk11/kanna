@@ -46,7 +46,7 @@ That's it. Kanna opens in your browser at [`localhost:3210`](http://localhost:32
 
 ## Features
 
-- **Multi-provider support** — switch between Claude and Codex (OpenAI) from the chat input, with per-provider model selection, reasoning effort controls, and Codex fast mode
+- **Multi-provider support** — switch between Claude, Codex (OpenAI), Hermes, and OpenCode from the chat input, with per-provider model selection, reasoning effort controls, and Codex fast mode
 - **Project-first sidebar** — chats grouped under projects, with live status indicators (idle, running, waiting, failed)
 - **Drag-and-drop project ordering** — reorder project groups in the sidebar with persistent ordering
 - **Local project discovery** — auto-discovers projects from both Claude and Codex local history
@@ -71,7 +71,7 @@ Bun Server (HTTP + WS)
     ├── EventStore ─── JSONL persistence + snapshot compaction
     └── ReadModels ─── derived views (sidebar, chat, projects)
     ↕  stdio
-Claude Agent SDK / Codex App Server (local processes)
+Claude Agent SDK / Codex App Server / ACP agents (local processes)
     ↕
 Local File System (~/.kanna/data/, project dirs)
 ```
@@ -83,6 +83,7 @@ Local File System (~/.kanna/data/, project dirs)
 - [Bun](https://bun.sh) v1.3.5+
 - A working [Claude Code](https://docs.anthropic.com/en/docs/claude-code) environment
 - _(Optional)_ [Codex CLI](https://github.com/openai/codex) for Codex provider support
+- _(Optional)_ [OpenCode](https://opencode.ai/docs/cli) for OpenCode provider support
 
 Embedded terminal support uses Bun's native PTY APIs and currently works on macOS/Linux.
 
@@ -232,7 +233,7 @@ src/
 │   ├── quick-response.ts    Structured queries with provider fallback
 │   ├── ws-router.ts WebSocket message routing & subscriptions
 │   ├── event-store.ts  JSONL persistence, replay & compaction
-│   ├── discovery.ts Auto-discover projects from Claude and Codex local state
+│   ├── discovery.ts Auto-discover projects from local provider state
 │   ├── read-models.ts  Derive view models from event state
 │   └── events.ts    Event type definitions
 └── shared/          Shared between client & server

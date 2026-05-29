@@ -14,6 +14,7 @@ import {
   listInstalledSkills,
   parseInstalledSkillsLock,
 } from "./ws-router"
+import { SERVER_PROVIDERS } from "./provider-catalog"
 
 function withSidebarGroupDefaults(group: {
   groupKey: string
@@ -108,7 +109,13 @@ const DEFAULT_APP_SETTINGS_SNAPSHOT: AppSettingsSnapshot = {
       modelOptions: {},
       planMode: false,
     },
+    opencode: {
+      model: "opencode-configured-default",
+      modelOptions: {},
+      planMode: false,
+    },
   },
+  availableProviders: SERVER_PROVIDERS,
   warning: null,
   filePathDisplay: "~/.kanna/data/settings.json",
 }

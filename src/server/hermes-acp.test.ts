@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
-import { HermesAcpManager } from "./hermes-acp"
+import { HermesAcpManager, OpenCodeAcpManager } from "./hermes-acp"
 
 class FakeHermesProcess extends EventEmitter {
   readonly stdin = new PassThrough()
@@ -494,6 +494,53 @@ describe("HermesAcpManager", () => {
           optionId: "deny",
         },
       },
+    })
+  })
+
+  test("buffers OpenCode ACP text chunks into one assistant transcript entry", async () => {
+    const process = new FakeHermesProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } })
+      } else if (message.method === "session/new") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { sessionId: "opencode-session-1" } })
+      } else if (message.method === "session/prompt") {
+        for (const text of ["Hello ", "from ", "OpenCode"]) {
+          child.writeAgentMessage({
+            jsonrpc: "2.0",
+            method: "session/update",
+            params: {
+              sessionId: "opencode-session-1",
+              update: {
+                sessionUpdate: "agent_message_chunk",
+                content: { type: "text", text },
+              },
+            },
+          })
+        }
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } })
+      }
+    })
+    const manager = new OpenCodeAcpManager({ spawnProcess: () => process as never })
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+
+    const turn = await manager.startTurn({ chatId: "chat-1", content: "hello OpenCode" })
+    const events = await collectStream(turn.stream)
+    const init = events.find((event) => event.type === "transcript" && event.entry.kind === "system_init")
+    const assistantMessages = events
+      .filter((event) => event.type === "transcript" && event.entry.kind === "assistant_text")
+      .map((event) => event.entry)
+
+    expect(turn.provider).toBe("opencode")
+    expect(init?.entry).toMatchObject({
+      kind: "system_init",
+      provider: "opencode",
+      model: "opencode-configured-default",
+      tools: ["OpenCode ACP"],
+    })
+    expect(assistantMessages).toHaveLength(1)
+    expect(assistantMessages[0]).toMatchObject({
+      kind: "assistant_text",
+      text: "Hello from OpenCode",
     })
   })
 })

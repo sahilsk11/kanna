@@ -1,5 +1,5 @@
-import { useState, type ComponentType, type SVGProps } from "react"
-import { Box, Brain, Gauge, ListTodo, LockOpen, SquareMenu, SquareMinus } from "lucide-react"
+import { useMemo, useState, type ComponentType, type SVGProps } from "react"
+import { Box, Brain, Gauge, ListTodo, LockOpen, Search, SquareMenu, SquareMinus } from "lucide-react"
 import {
   CLAUDE_CONTEXT_WINDOW_OPTIONS,
   CLAUDE_REASONING_OPTIONS,
@@ -11,7 +11,9 @@ import {
   type CodexModelOptions,
   type CodexReasoningEffort,
   type HermesModelOptions,
+  type OpenCodeModelOptions,
   type ProviderCatalogEntry,
+  type ProviderModelOption,
   supportsClaudeMaxReasoningEffort,
 } from "../../../shared/types"
 import { cn } from "../../lib/utils"
@@ -51,6 +53,7 @@ export const PROVIDER_ICONS: Record<AgentProvider, IconComponent> = {
   claude: AnthropicIcon,
   codex: OpenAIIcon,
   hermes: Box,
+  opencode: SquareMenu,
 }
 
 export function PopoverMenuItem({
@@ -140,6 +143,102 @@ export type ModelOptionChange =
   | { type: "codexReasoningEffort"; effort: CodexReasoningEffort }
   | { type: "fastMode"; fastMode: boolean }
 
+function getModelSearchText(model: ProviderModelOption) {
+  return [model.id, model.label, ...(model.aliases ?? [])].join(" ").toLowerCase()
+}
+
+function ModelPickerPopover({
+  provider,
+  selectedModel,
+  showCodexCliRequirementHints,
+  onModelChange,
+}: {
+  provider: ProviderCatalogEntry
+  selectedModel: string
+  showCodexCliRequirementHints: boolean
+  onModelChange: (model: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState("")
+  const selectedLabel = provider.models.find((candidate) => candidate.id === selectedModel)?.label ?? selectedModel
+  const normalizedQuery = query.trim().toLowerCase()
+  const filteredModels = useMemo(
+    () => normalizedQuery
+      ? provider.models.filter((candidate) => getModelSearchText(candidate).includes(normalizedQuery))
+      : provider.models,
+    [normalizedQuery, provider.models]
+  )
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen)
+        if (!nextOpen) {
+          setQuery("")
+        }
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          className={cn(
+            "flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors [&>svg]:shrink-0 hover:bg-muted/50"
+          )}
+        >
+          <Box className="h-3.5 w-3.5" />
+          <span className="max-w-[16rem] truncate whitespace-nowrap">{selectedLabel}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="center" className="w-[min(22rem,calc(100vw-2rem))] p-2">
+        <div className="space-y-2">
+          <div className="flex h-9 items-center gap-2 rounded-md border border-border bg-background px-2">
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search models"
+              className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              autoFocus
+            />
+          </div>
+          <div className="max-h-64 overflow-y-auto pr-1">
+            {filteredModels.length > 0 ? (
+              <div className="space-y-1">
+                {filteredModels.map((candidate) => (
+                  <button
+                    key={candidate.id}
+                    type="button"
+                    onClick={() => {
+                      onModelChange(candidate.id)
+                      setOpen(false)
+                      setQuery("")
+                    }}
+                    className={cn(
+                      "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+                      selectedModel === candidate.id ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                    )}
+                    title={candidate.id}
+                  >
+                    <Box className="h-3.5 w-3.5 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">
+                      {candidate.label}
+                      {showCodexCliRequirementHints && provider.id === "codex" && candidate.id === "gpt-5.5" ? (
+                        <span className="ml-1 text-xs text-muted-foreground">codex-cli &gt;= 0.124</span>
+                      ) : null}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="px-2 py-6 text-center text-sm text-muted-foreground">No models found.</div>
+            )}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 interface ChatPreferenceControlsProps {
   availableProviders: ProviderCatalogEntry[]
   selectedProvider: AgentProvider
@@ -147,7 +246,7 @@ interface ChatPreferenceControlsProps {
   providerLocked?: boolean
   showCodexCliRequirementHints?: boolean
   model: string
-  modelOptions: ClaudeModelOptions | CodexModelOptions | HermesModelOptions
+  modelOptions: ClaudeModelOptions | CodexModelOptions | HermesModelOptions | OpenCodeModelOptions
   onProviderChange?: (provider: AgentProvider) => void
   onModelChange: (provider: AgentProvider, model: string) => void
   onModelOptionChange: (change: ModelOptionChange) => void
@@ -175,11 +274,13 @@ export function ChatPreferenceControls({
 }: ChatPreferenceControlsProps) {
   const providerConfig = availableProviders.find((provider) => provider.id === selectedProvider) ?? availableProviders[0]
   const ProviderIcon = PROVIDER_ICONS[selectedProvider]
-  const ModelIcon = Box
   const showPlanMode = includePlanMode && providerConfig?.supportsPlanMode && onPlanModeChange
+  const selectedModel = providerConfig?.models.some((candidate) => candidate.id === model)
+    ? model
+    : providerConfig?.defaultModel ?? model
   const claudeModelOptions = selectedProvider === "claude" ? modelOptions as ClaudeModelOptions : null
   const codexModelOptions = selectedProvider === "codex" ? modelOptions as CodexModelOptions : null
-  const contextWindowOptions = providerConfig.models.find((candidate) => candidate.id === model)?.contextWindowOptions ?? []
+  const contextWindowOptions = providerConfig?.models.find((candidate) => candidate.id === selectedModel)?.contextWindowOptions ?? []
   const selectedContextWindow = claudeModelOptions?.contextWindow ?? CLAUDE_CONTEXT_WINDOW_OPTIONS[0].id
   const ContextWindowIcon = selectedContextWindow === "1m" ? SquareMenu : SquareMinus
   const selectedEffortLabel = selectedProvider === "claude" && claudeModelOptions
@@ -218,41 +319,14 @@ export function ChatPreferenceControls({
         </InputPopover>
       ) : null}
 
-      <InputPopover
-        trigger={(
-          <>
-            <ModelIcon className="h-3.5 w-3.5" />
-            <span>{providerConfig.models.find((candidate) => candidate.id === model)?.label ?? model}</span>
-          </>
-        )}
-      >
-        {(close) => providerConfig.models.map((candidate) => {
-          const Icon = Box
-          return (
-            <PopoverMenuItem
-              key={candidate.id}
-              onClick={() => {
-                onModelChange(selectedProvider, candidate.id)
-                close()
-              }}
-              selected={model === candidate.id}
-              icon={<Icon className="h-4 w-4 text-muted-foreground" />}
-              label={
-                showCodexCliRequirementHints && selectedProvider === "codex" && candidate.id === "gpt-5.5"
-                  ? (
-                    <>
-                      {candidate.label}{" "}
-                      <span className="text-xs font-normal text-muted-foreground">
-                        codex-cli &gt;= 0.124
-                      </span>
-                    </>
-                  )
-                  : candidate.label
-              }
-            />
-          )
-        })}
-      </InputPopover>
+      {providerConfig ? (
+        <ModelPickerPopover
+          provider={providerConfig}
+          selectedModel={selectedModel}
+          showCodexCliRequirementHints={showCodexCliRequirementHints}
+          onModelChange={(nextModel) => onModelChange(selectedProvider, nextModel)}
+        />
+      ) : null}
 
       {selectedEffortLabel ? (
         <InputPopover
@@ -275,7 +349,7 @@ export function ChatPreferenceControls({
                   selected={claudeModelOptions.reasoningEffort === effort.id}
                   icon={<Brain className="h-4 w-4 text-muted-foreground" />}
                   label={effort.label}
-                  disabled={effort.id === "max" && !supportsClaudeMaxReasoningEffort(model)}
+                  disabled={effort.id === "max" && !supportsClaudeMaxReasoningEffort(selectedModel)}
                 />
               ))
               : codexModelOptions

@@ -4,7 +4,7 @@ import path from "node:path"
 import { createInterface } from "node:readline"
 import { fileURLToPath } from "node:url"
 import type { Readable, Writable } from "node:stream"
-import type { ContextWindowUsageSnapshot, TodoItem, TranscriptEntry } from "../shared/types"
+import { DEFAULT_HERMES_MODEL, DEFAULT_OPENCODE_MODEL, type AgentProvider, type ContextWindowUsageSnapshot, type TodoItem, type TranscriptEntry } from "../shared/types"
 import type { HarnessEvent, HarnessTurn } from "./harness-types"
 import {
   type CancelParams,
@@ -35,7 +35,7 @@ import {
   isSessionUpdateNotification,
 } from "./hermes-acp-protocol"
 
-interface HermesAcpProcess {
+export interface AcpProcess {
   stdin: Writable
   stdout: Readable
   stderr: Readable
@@ -45,7 +45,7 @@ interface HermesAcpProcess {
   on(event: "error", listener: (error: Error) => void): this
 }
 
-type SpawnHermesAcp = (cwd: string) => HermesAcpProcess
+export type SpawnAcp = (cwd: string) => AcpProcess
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url))
 const HERMES_ACP_BRIDGE_PATH = path.join(SERVER_DIR, "hermes-acp-bridge.cjs")
@@ -61,12 +61,13 @@ interface PendingTurn {
   startedToolIds: Set<string>
   resolved: boolean
   assistantText: string
+  bufferedAssistantText: string
 }
 
 interface SessionContext {
   chatId: string
   cwd: string
-  child: HermesAcpProcess
+  child: AcpProcess
   pendingRequests: Map<HermesAcpRequestId, PendingRequest<unknown>>
   pendingTurn: PendingTurn | null
   sessionToken: string | null
@@ -92,6 +93,15 @@ export interface GenerateHermesStructuredArgs {
   prompt: string
 }
 
+interface AcpProviderConfig {
+  provider: Extract<AgentProvider, "hermes" | "opencode">
+  displayName: string
+  defaultModel: string
+  toolsLabel: string
+  planToolIdPrefix: string
+  fallbackToolName: string
+}
+
 function timestamped<T extends Omit<TranscriptEntry, "_id" | "createdAt">>(
   entry: T,
   createdAt = Date.now()
@@ -103,12 +113,12 @@ function timestamped<T extends Omit<TranscriptEntry, "_id" | "createdAt">>(
   } as TranscriptEntry
 }
 
-function hermesSystemInitEntry(model: string): TranscriptEntry {
+function acpSystemInitEntry(config: AcpProviderConfig, model: string): TranscriptEntry {
   return timestamped({
     kind: "system_init",
-    provider: "hermes",
+    provider: config.provider,
     model,
-    tools: ["Hermes ACP"],
+    tools: [config.toolsLabel],
     agents: [],
     slashCommands: [],
     mcpServers: [],
@@ -214,14 +224,14 @@ function planEntriesToTodos(entries: PlanEntry[]): TodoItem[] {
   }))
 }
 
-function planToolCall(entries: PlanEntry[]): TranscriptEntry {
+function planToolCall(config: AcpProviderConfig, entries: PlanEntry[]): TranscriptEntry {
   return timestamped({
     kind: "tool_call",
     tool: {
       kind: "tool",
       toolKind: "todo_write",
       toolName: "TodoWrite",
-      toolId: `hermes-plan-${randomUUID()}`,
+      toolId: `${config.planToolIdPrefix}-${randomUUID()}`,
       input: {
         todos: planEntriesToTodos(entries),
       },
@@ -242,19 +252,19 @@ function toolPayload(update: ToolCallUpdatePayload): Record<string, unknown> {
   }
 }
 
-function toolNameFromUpdate(update: ToolCallUpdatePayload): string {
+function toolNameFromUpdate(config: AcpProviderConfig, update: ToolCallUpdatePayload): string {
   const rawInput = asRecord(update.rawInput)
   const rawToolName = rawInput?.tool ?? rawInput?.toolName ?? rawInput?.name
   if (typeof rawToolName === "string" && rawToolName.trim()) return rawToolName.trim()
-  return update.title?.trim() || update.kind || "HermesTool"
+  return update.title?.trim() || update.kind || config.fallbackToolName
 }
 
-function toolCallEntry(update: ToolCallUpdatePayload): TranscriptEntry {
+function toolCallEntry(config: AcpProviderConfig, update: ToolCallUpdatePayload): TranscriptEntry {
   const payload = toolPayload(update)
   const command = typeof payload.command === "string" ? payload.command : null
   const path = typeof payload.path === "string" ? payload.path : null
   const toolId = update.toolCallId
-  const toolName = toolNameFromUpdate(update)
+  const toolName = toolNameFromUpdate(config, update)
 
   if (update.kind === "execute" && command) {
     return timestamped({
@@ -417,15 +427,25 @@ class AsyncQueue<T> implements AsyncIterable<T> {
 
 export class HermesAcpManager {
   private readonly sessions = new Map<string, SessionContext>()
-  private readonly spawnProcess: SpawnHermesAcp
+  private readonly spawnProcess: SpawnAcp
+  private readonly providerConfig: AcpProviderConfig
 
-  constructor(args: { spawnProcess?: SpawnHermesAcp } = {}) {
+  constructor(args: { spawnProcess?: SpawnAcp; providerConfig?: Partial<AcpProviderConfig> } = {}) {
+    this.providerConfig = {
+      provider: "hermes",
+      displayName: "Hermes",
+      defaultModel: DEFAULT_HERMES_MODEL,
+      toolsLabel: "Hermes ACP",
+      planToolIdPrefix: "hermes-plan",
+      fallbackToolName: "HermesTool",
+      ...args.providerConfig,
+    }
     this.spawnProcess = args.spawnProcess ?? ((cwd) =>
       spawn(process.execPath, [HERMES_ACP_BRIDGE_PATH], {
         cwd,
         stdio: ["pipe", "pipe", "pipe"],
         env: process.env,
-      }) as unknown as HermesAcpProcess)
+      }) as unknown as AcpProcess)
   }
 
   async startSession(args: StartHermesSessionArgs): Promise<string | undefined> {
@@ -531,21 +551,22 @@ export class HermesAcpManager {
   async startTurn(args: StartHermesTurnArgs): Promise<HarnessTurn> {
     const context = this.requireSession(args.chatId)
     if (context.pendingTurn) {
-      throw new Error("Hermes turn is already running")
+      throw new Error(`${this.providerConfig.displayName} turn is already running`)
     }
     if (!context.sessionToken) {
-      throw new Error("Hermes session not initialized")
+      throw new Error(`${this.providerConfig.displayName} session not initialized`)
     }
 
     const queue = new AsyncQueue<HarnessEvent>()
     queue.push({ type: "session_token", sessionToken: context.sessionToken })
-    queue.push({ type: "transcript", entry: hermesSystemInitEntry(args.model ?? "hermes-configured-default") })
+    queue.push({ type: "transcript", entry: acpSystemInitEntry(this.providerConfig, args.model ?? this.providerConfig.defaultModel) })
 
     const pendingTurn: PendingTurn = {
       queue,
       startedToolIds: new Set(),
       resolved: false,
       assistantText: "",
+      bufferedAssistantText: "",
     }
     context.pendingTurn = pendingTurn
 
@@ -563,7 +584,7 @@ export class HermesAcpManager {
       .catch((error) => this.failTurn(context, errorMessage(error)))
 
     return {
-      provider: "hermes",
+      provider: this.providerConfig.provider,
       stream: queue,
       interrupt: async () => {
         const pendingTurn = context.pendingTurn
@@ -641,7 +662,7 @@ export class HermesAcpManager {
   private requireSession(chatId: string) {
     const context = this.sessions.get(chatId)
     if (!context || context.closed) {
-      throw new Error("Hermes session not started")
+      throw new Error(`${this.providerConfig.displayName} session not started`)
     }
     return context
   }
@@ -686,7 +707,7 @@ export class HermesAcpManager {
       if (context.closed) return
       queueMicrotask(() => {
         if (context.closed) return
-        const message = context.stderrLines.at(-1) || `Hermes ACP exited with code ${code ?? 1}`
+        const message = context.stderrLines.at(-1) || `${this.providerConfig.displayName} ACP exited with code ${code ?? 1}`
         this.failContext(context, message)
       })
     })
@@ -737,9 +758,13 @@ export class HermesAcpManager {
       case "agent_message_chunk": {
         const text = textFromContentBlock((update as { content?: unknown }).content)
         if (!text) return
-        const hidden = isHermesInternalAssistantText(text)
+        const hidden = this.providerConfig.provider === "hermes" && isHermesInternalAssistantText(text)
         if (!hidden) {
           pendingTurn.assistantText += text
+        }
+        if (!hidden && this.providerConfig.provider === "opencode") {
+          pendingTurn.bufferedAssistantText += text
+          return
         }
         pendingTurn.queue.push({
           type: "transcript",
@@ -766,6 +791,7 @@ export class HermesAcpManager {
       }
       case "tool_call":
       case "tool_call_update":
+        this.flushBufferedAssistantText(pendingTurn)
         this.handleToolUpdate(pendingTurn, update as ToolCallUpdatePayload)
         return
       case "plan": {
@@ -773,15 +799,17 @@ export class HermesAcpManager {
           ? (update as { entries: PlanEntry[] }).entries
           : []
         if (entries.length === 0) return
+        this.flushBufferedAssistantText(pendingTurn)
         pendingTurn.queue.push({
           type: "transcript",
-          entry: planToolCall(entries),
+          entry: planToolCall(this.providerConfig, entries),
         })
         return
       }
       case "usage_update": {
         const usage = normalizeUsageFromUpdate(update)
         if (!usage) return
+        this.flushBufferedAssistantText(pendingTurn)
         pendingTurn.queue.push({
           type: "transcript",
           entry: timestamped({
@@ -796,12 +824,24 @@ export class HermesAcpManager {
     }
   }
 
+  private flushBufferedAssistantText(pendingTurn: PendingTurn) {
+    if (!pendingTurn.bufferedAssistantText) return
+    pendingTurn.queue.push({
+      type: "transcript",
+      entry: timestamped({
+        kind: "assistant_text",
+        text: pendingTurn.bufferedAssistantText,
+      }),
+    })
+    pendingTurn.bufferedAssistantText = ""
+  }
+
   private handleToolUpdate(pendingTurn: PendingTurn, update: ToolCallUpdatePayload) {
     if (!pendingTurn.startedToolIds.has(update.toolCallId)) {
       pendingTurn.startedToolIds.add(update.toolCallId)
       pendingTurn.queue.push({
         type: "transcript",
-        entry: toolCallEntry(update),
+        entry: toolCallEntry(this.providerConfig, update),
       })
     }
 
@@ -817,6 +857,8 @@ export class HermesAcpManager {
     const pendingTurn = context.pendingTurn
     if (!pendingTurn || pendingTurn.resolved) return
     pendingTurn.resolved = true
+
+    this.flushBufferedAssistantText(pendingTurn)
 
     const usage = normalizeUsageFromPrompt(response.usage)
     if (usage) {
@@ -892,5 +934,26 @@ export class HermesAcpManager {
 
   private writeMessage(context: SessionContext, message: Record<string, unknown>) {
     context.child.stdin.write(`${JSON.stringify(message)}\n`)
+  }
+}
+
+export class OpenCodeAcpManager extends HermesAcpManager {
+  constructor(args: { spawnProcess?: SpawnAcp } = {}) {
+    super({
+      spawnProcess: args.spawnProcess ?? ((cwd) =>
+        spawn("opencode", ["acp"], {
+          cwd,
+          stdio: ["pipe", "pipe", "pipe"],
+          env: process.env,
+        }) as unknown as AcpProcess),
+      providerConfig: {
+        provider: "opencode",
+        displayName: "OpenCode",
+        defaultModel: DEFAULT_OPENCODE_MODEL,
+        toolsLabel: "OpenCode ACP",
+        planToolIdPrefix: "opencode-plan",
+        fallbackToolName: "OpenCodeTool",
+      },
+    })
   }
 }
