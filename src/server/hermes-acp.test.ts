@@ -543,4 +543,70 @@ describe("HermesAcpManager", () => {
       text: "Hello from OpenCode",
     })
   })
+
+  test("sets the selected OpenCode model before prompting", async () => {
+    const process = new FakeHermesProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } })
+      } else if (message.method === "session/new") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { sessionId: "opencode-session-1" } })
+      } else if (message.method === "session/set_model") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: {} })
+      } else if (message.method === "session/prompt") {
+        child.writeAgentMessage({
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "opencode-session-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "pong" },
+            },
+          },
+        })
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } })
+      }
+    })
+    const manager = new OpenCodeAcpManager({ spawnProcess: () => process as never })
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+
+    const turn = await manager.startTurn({ chatId: "chat-1", content: "ping", model: "opencode/big-pickle" })
+    await collectStream(turn.stream)
+    const methods = process.messages.map((message: any) => message.method)
+    const setModel = process.messages.find((message: any) => message.method === "session/set_model") as any
+
+    expect(methods).toEqual(["initialize", "session/new", "session/set_model", "session/prompt"])
+    expect(setModel.params).toEqual({
+      sessionId: "opencode-session-1",
+      modelId: "opencode/big-pickle",
+    })
+  })
+
+  test("reports no-output OpenCode turns as visible errors", async () => {
+    const process = new FakeHermesProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } })
+      } else if (message.method === "session/new") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { sessionId: "opencode-session-1" } })
+      } else if (message.method === "session/set_model") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: {} })
+      } else if (message.method === "session/prompt") {
+        child.writeStderr("missing API key")
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { stopReason: "end_turn" } })
+      }
+    })
+    const manager = new OpenCodeAcpManager({ spawnProcess: () => process as never })
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+
+    const turn = await manager.startTurn({ chatId: "chat-1", content: "ping", model: "opencode/big-pickle" })
+    const events = await collectStream(turn.stream)
+    const result = events.find((event) => event.type === "transcript" && event.entry.kind === "result")
+
+    expect(result?.entry).toMatchObject({
+      kind: "result",
+      subtype: "error",
+      isError: true,
+      result: "OpenCode returned no output. Last OpenCode log: missing API key",
+    })
+  })
 })
