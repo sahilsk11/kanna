@@ -26,6 +26,19 @@ describe("processTranscriptMessages", () => {
     })
   })
 
+  test("drops hidden assistant text chunks before hydration", () => {
+    const messages = processTranscriptMessages([
+      entry({ kind: "assistant_text", text: "raw thought", hidden: true }),
+      entry({ kind: "assistant_text", text: "Visible" }),
+    ])
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      kind: "assistant_text",
+      text: "Visible",
+    })
+  })
+
   test("hydrates tool results onto prior tool calls", () => {
     const messages = processTranscriptMessages([
       entry({

@@ -65,6 +65,7 @@ interface PendingTurn {
   assistantText: string
   bufferedAssistantText: string
   hasVisibleOutput: boolean
+  hasThinkingStatus: boolean
 }
 
 interface SessionContext {
@@ -592,6 +593,7 @@ export class HermesAcpManager {
       assistantText: "",
       bufferedAssistantText: "",
       hasVisibleOutput: false,
+      hasThinkingStatus: false,
     }
     context.pendingTurn = pendingTurn
 
@@ -819,6 +821,19 @@ export class HermesAcpManager {
       case "agent_thought_chunk": {
         const text = textFromContentBlock((update as { content?: unknown }).content)
         if (!text) return
+        if (this.providerConfig.provider === "opencode") {
+          if (!pendingTurn.hasThinkingStatus) {
+            pendingTurn.hasThinkingStatus = true
+            pendingTurn.queue.push({
+              type: "transcript",
+              entry: timestamped({
+                kind: "status",
+                status: "thinking",
+              }),
+            })
+          }
+          return
+        }
         pendingTurn.queue.push({
           type: "transcript",
           entry: timestamped({
