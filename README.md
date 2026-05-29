@@ -70,8 +70,8 @@ Bun Server (HTTP + WS)
     ├── QuickResponseAdapter ─── structured queries with provider fallback
     ├── EventStore ─── JSONL persistence + snapshot compaction
     └── ReadModels ─── derived views (sidebar, chat, projects)
-    ↕  stdio
-Claude Agent SDK / Codex App Server / ACP agents (local processes)
+    ↕  stdio / HTTP+SSE
+Claude Agent SDK / Codex App Server / OpenCode Server / ACP agents (local processes)
     ↕
 Local File System (~/.kanna/data/, project dirs)
 ```
@@ -229,6 +229,7 @@ src/
 │   ├── server.ts    HTTP/WS server setup & static serving
 │   ├── agent.ts     AgentCoordinator (multi-provider turn management)
 │   ├── codex-app-server.ts  Codex App Server JSON-RPC client
+│   ├── opencode-server.ts  OpenCode HTTP/SSE server client
 │   ├── provider-catalog.ts  Provider/model/effort normalization
 │   ├── quick-response.ts    Structured queries with provider fallback
 │   ├── ws-router.ts WebSocket message routing & subscriptions

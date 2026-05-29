@@ -20,7 +20,8 @@ import { NoopAnalyticsReporter } from "./analytics"
 import { CodexAppServerManager } from "./codex-app-server"
 import { type GenerateChatTitleResult, generateTitleForChatDetailed } from "./generate-title"
 import type { HarnessEvent, HarnessToolRequest, HarnessTurn } from "./harness-types"
-import { HermesAcpManager, OpenCodeAcpManager } from "./hermes-acp"
+import { HermesAcpManager } from "./hermes-acp"
+import { OpenCodeServerManager } from "./opencode-server"
 import {
   codexServiceTierFromModelOptions,
   getServerProviderCatalog,
@@ -108,7 +109,7 @@ interface AgentCoordinatorArgs {
   analytics?: AnalyticsReporter
   codexManager?: CodexAppServerManager
   hermesManager?: HermesAcpManager
-  opencodeManager?: OpenCodeAcpManager
+  opencodeManager?: OpenCodeServerManager
   generateTitle?: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
   startClaudeSession?: (args: {
     localPath: string
@@ -689,7 +690,7 @@ export class AgentCoordinator {
   private readonly analytics: AnalyticsReporter
   private readonly codexManager: CodexAppServerManager
   private readonly hermesManager: HermesAcpManager
-  private readonly opencodeManager: OpenCodeAcpManager
+  private readonly opencodeManager: OpenCodeServerManager
   private readonly generateTitle: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
   private readonly startClaudeSessionFn: NonNullable<AgentCoordinatorArgs["startClaudeSession"]>
   private reportBackgroundError: ((message: string) => void) | null = null
@@ -703,7 +704,7 @@ export class AgentCoordinator {
     this.analytics = args.analytics ?? NoopAnalyticsReporter
     this.codexManager = args.codexManager ?? new CodexAppServerManager()
     this.hermesManager = args.hermesManager ?? new HermesAcpManager()
-    this.opencodeManager = args.opencodeManager ?? new OpenCodeAcpManager()
+    this.opencodeManager = args.opencodeManager ?? new OpenCodeServerManager()
     this.generateTitle = args.generateTitle ?? generateTitleForChatDetailed
     this.startClaudeSessionFn = args.startClaudeSession ?? startClaudeSession
   }
@@ -1032,14 +1033,13 @@ export class AgentCoordinator {
         provider: args.provider,
         model: args.model,
       })
-    } else {
-      const acpManager = args.provider === "opencode" ? this.opencodeManager : this.hermesManager
+    } else if (args.provider === "opencode") {
       logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
         chatId: args.chatId,
         provider: args.provider,
         model: args.model,
       })
-      const sessionToken = await acpManager.startSession({
+      const sessionToken = await this.opencodeManager.startSession({
         chatId: args.chatId,
         cwd: project.localPath,
         sessionToken: chat.sessionToken,
@@ -1053,7 +1053,37 @@ export class AgentCoordinator {
         provider: args.provider,
         model: args.model,
       })
-      turn = await acpManager.startTurn({
+      turn = await this.opencodeManager.startTurn({
+        chatId: args.chatId,
+        content: buildPromptText(args.content, args.attachments),
+        model: args.model,
+      })
+      logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
+        chatId: args.chatId,
+        provider: args.provider,
+        model: args.model,
+      })
+    } else {
+      logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
+        chatId: args.chatId,
+        provider: args.provider,
+        model: args.model,
+      })
+      const sessionToken = await this.hermesManager.startSession({
+        chatId: args.chatId,
+        cwd: project.localPath,
+        sessionToken: chat.sessionToken,
+        pendingForkSessionToken: chat.pendingForkSessionToken,
+      })
+      if (chat.pendingForkSessionToken && sessionToken) {
+        await this.store.setPendingForkSessionToken(args.chatId, null)
+      }
+      logSendToStartingProfile(args.profile, "start_turn.session_ready", {
+        chatId: args.chatId,
+        provider: args.provider,
+        model: args.model,
+      })
+      turn = await this.hermesManager.startTurn({
         chatId: args.chatId,
         content: buildPromptText(args.content, args.attachments),
         model: args.model,

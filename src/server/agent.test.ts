@@ -1370,7 +1370,7 @@ describe("AgentCoordinator Hermes integration", () => {
     expect(store.chat.sessionToken).toBe("hermes-session-1")
   })
 
-  test("routes OpenCode turns through OpenCodeAcpManager", async () => {
+  test("routes OpenCode turns through OpenCodeServerManager", async () => {
     const events = new AsyncEventQueue<any>()
     const opencodeSessionCalls: Array<{
       chatId: string

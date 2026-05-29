@@ -4,7 +4,7 @@ import path from "node:path"
 import { createInterface } from "node:readline"
 import { fileURLToPath } from "node:url"
 import type { Readable, Writable } from "node:stream"
-import { DEFAULT_HERMES_MODEL, DEFAULT_OPENCODE_MODEL, type AgentProvider, type ContextWindowUsageSnapshot, type TodoItem, type TranscriptEntry } from "../shared/types"
+import { DEFAULT_HERMES_MODEL, type AgentProvider, type ContextWindowUsageSnapshot, type TodoItem, type TranscriptEntry } from "../shared/types"
 import type { HarnessEvent, HarnessTurn } from "./harness-types"
 import {
   type CancelParams,
@@ -25,8 +25,6 @@ import {
   type RequestPermissionResponse,
   type ResumeSessionParams,
   type ResumeSessionResponse,
-  type SetSessionModelParams,
-  type SetSessionModelResponse,
   type SessionInfo,
   type SessionUpdate,
   type SessionUpdateNotification,
@@ -75,7 +73,6 @@ interface SessionContext {
   pendingRequests: Map<HermesAcpRequestId, PendingRequest<unknown>>
   pendingTurn: PendingTurn | null
   sessionToken: string | null
-  defaultModelId: string | null
   stderrLines: string[]
   closed: boolean
 }
@@ -99,7 +96,7 @@ export interface GenerateHermesStructuredArgs {
 }
 
 interface AcpProviderConfig {
-  provider: Extract<AgentProvider, "hermes" | "opencode">
+  provider: Extract<AgentProvider, "hermes">
   displayName: string
   defaultModel: string
   toolsLabel: string
@@ -150,21 +147,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined
-}
-
-function modelIdFromConfigOptions(configOptions: unknown): string | null {
-  if (!Array.isArray(configOptions)) return null
-  for (const option of configOptions) {
-    const record = asRecord(option)
-    if (!record) continue
-    const id = typeof record.id === "string" ? record.id : ""
-    const category = typeof record.category === "string" ? record.category : ""
-    const currentValue = typeof record.currentValue === "string" ? record.currentValue.trim() : ""
-    if (currentValue && (id === "model" || category === "model")) {
-      return currentValue
-    }
-  }
-  return null
 }
 
 function textFromContentBlock(content: unknown): string {
@@ -486,7 +468,6 @@ export class HermesAcpManager {
       pendingRequests: new Map(),
       pendingTurn: null,
       sessionToken: null,
-      defaultModelId: null,
       stderrLines: [],
       closed: false,
     }
@@ -514,22 +495,19 @@ export class HermesAcpManager {
         mcpServers: [],
       } satisfies ForkSessionParams)
       context.sessionToken = response.sessionId || null
-      context.defaultModelId = modelIdFromConfigOptions(response.configOptions)
     } else if (args.sessionToken) {
-      const response = await this.sendRequest<ResumeSessionResponse>(context, "session/resume", {
+      await this.sendRequest<ResumeSessionResponse>(context, "session/resume", {
         cwd: args.cwd,
         sessionId: args.sessionToken,
         mcpServers: [],
       } satisfies ResumeSessionParams)
       context.sessionToken = args.sessionToken
-      context.defaultModelId = modelIdFromConfigOptions(response.configOptions)
     } else {
       const response = await this.sendRequest<NewSessionResponse>(context, "session/new", {
         cwd: args.cwd,
         mcpServers: [],
       } satisfies NewSessionParams)
       context.sessionToken = response.sessionId
-      context.defaultModelId = modelIdFromConfigOptions(response.configOptions)
     }
 
     return context.sessionToken ?? undefined
@@ -546,7 +524,6 @@ export class HermesAcpManager {
       pendingRequests: new Map(),
       pendingTurn: null,
       sessionToken: null,
-      defaultModelId: null,
       stderrLines: [],
       closed: false,
     }
@@ -597,12 +574,7 @@ export class HermesAcpManager {
     }
     context.pendingTurn = pendingTurn
 
-    void this.prepareTurn(context, args.model)
-      .then((shouldPrompt) => {
-        if (!shouldPrompt || context.pendingTurn !== pendingTurn || pendingTurn.resolved) {
-          return null
-        }
-        return this.sendRequest<PromptResponse>(context, "session/prompt", {
+    void this.sendRequest<PromptResponse>(context, "session/prompt", {
           sessionId: context.sessionToken!,
           messageId: randomUUID(),
           prompt: [
@@ -612,11 +584,8 @@ export class HermesAcpManager {
             },
           ],
         } satisfies PromptParams)
-      })
       .then((response) => {
-        if (response) {
-          this.handlePromptCompleted(context, response)
-        }
+        this.handlePromptCompleted(context, response)
       })
       .catch((error) => {
         if (context.pendingTurn === pendingTurn && !pendingTurn.resolved) {
@@ -804,10 +773,6 @@ export class HermesAcpManager {
           pendingTurn.assistantText += text
           pendingTurn.hasVisibleOutput = true
         }
-        if (!hidden && this.providerConfig.provider === "opencode") {
-          pendingTurn.bufferedAssistantText += text
-          return
-        }
         pendingTurn.queue.push({
           type: "transcript",
           entry: timestamped({
@@ -821,19 +786,6 @@ export class HermesAcpManager {
       case "agent_thought_chunk": {
         const text = textFromContentBlock((update as { content?: unknown }).content)
         if (!text) return
-        if (this.providerConfig.provider === "opencode") {
-          if (!pendingTurn.hasThinkingStatus) {
-            pendingTurn.hasThinkingStatus = true
-            pendingTurn.queue.push({
-              type: "transcript",
-              entry: timestamped({
-                kind: "status",
-                status: "thinking",
-              }),
-            })
-          }
-          return
-        }
         pendingTurn.queue.push({
           type: "transcript",
           entry: timestamped({
@@ -947,20 +899,6 @@ export class HermesAcpManager {
     context.pendingTurn = null
   }
 
-  private async prepareTurn(context: SessionContext, model: string | undefined) {
-    if (this.providerConfig.provider !== "opencode" || !model) return true
-    if (!context.sessionToken) {
-      throw new Error(`${this.providerConfig.displayName} session not initialized`)
-    }
-    const modelId = model === DEFAULT_OPENCODE_MODEL ? context.defaultModelId : model
-    if (!modelId) return true
-    await this.sendRequest<SetSessionModelResponse>(context, "session/set_model", {
-      sessionId: context.sessionToken,
-      modelId,
-    } satisfies SetSessionModelParams)
-    return true
-  }
-
   private getNoOutputErrorMessage(
     context: SessionContext,
     pendingTurn: PendingTurn,
@@ -1021,26 +959,5 @@ export class HermesAcpManager {
 
   private writeMessage(context: SessionContext, message: Record<string, unknown>) {
     context.child.stdin.write(`${JSON.stringify(message)}\n`)
-  }
-}
-
-export class OpenCodeAcpManager extends HermesAcpManager {
-  constructor(args: { spawnProcess?: SpawnAcp } = {}) {
-    super({
-      spawnProcess: args.spawnProcess ?? ((cwd) =>
-        spawn("opencode", ["acp"], {
-          cwd,
-          stdio: ["pipe", "pipe", "pipe"],
-          env: process.env,
-        }) as unknown as AcpProcess),
-      providerConfig: {
-        provider: "opencode",
-        displayName: "OpenCode",
-        defaultModel: DEFAULT_OPENCODE_MODEL,
-        toolsLabel: "OpenCode ACP",
-        planToolIdPrefix: "opencode-plan",
-        fallbackToolName: "OpenCodeTool",
-      },
-    })
   }
 }
