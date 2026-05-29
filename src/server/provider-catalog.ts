@@ -78,7 +78,7 @@ export async function discoverOpenCodeModels(options?: {
   timeoutMs?: number
 }): Promise<ProviderModelOption[]> {
   const command = options?.command ?? "opencode"
-  const timeoutMs = options?.timeoutMs ?? 3_000
+  const timeoutMs = options?.timeoutMs ?? 10_000
 
   return await new Promise((resolve, reject) => {
     const child = spawn(command, ["models"], {

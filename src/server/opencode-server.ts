@@ -36,6 +36,7 @@ interface PendingTurn {
   queue: AsyncQueue<HarnessEvent>
   resolved: boolean
   textByMessageId: Map<string, string>
+  roleByMessageId: Map<string, string>
   completedMessages: Set<string>
   startedToolIds: Set<string>
   hasThinkingStatus: boolean
@@ -374,6 +375,7 @@ export class OpenCodeServerManager {
       queue,
       resolved: false,
       textByMessageId: new Map(),
+      roleByMessageId: new Map(),
       completedMessages: new Set(),
       startedToolIds: new Set(),
       hasThinkingStatus: false,
@@ -620,8 +622,11 @@ export class OpenCodeServerManager {
         this.handlePartUpdated(pendingTurn, event)
         return
       case "message.updated":
+        if (event.messageId) {
+          pendingTurn.roleByMessageId.set(event.messageId, event.role)
+        }
         if (event.role === "assistant" && event.timeEnd !== null) {
-          this.completeTurn(context, false, "")
+          this.completeTurn(context, false, "", [event.messageId])
         }
         return
       case "session.idle":
@@ -662,13 +667,19 @@ export class OpenCodeServerManager {
     }
   }
 
-  private completeTurn(context: SessionContext, isError: boolean, message: string) {
+  private completeTurn(context: SessionContext, isError: boolean, message: string, completedMessageIds?: string[]) {
     const pendingTurn = context.pendingTurn
     if (!pendingTurn || pendingTurn.resolved) return
     pendingTurn.resolved = true
 
-    for (const [messageId, text] of pendingTurn.textByMessageId.entries()) {
-      const trimmed = text.trim()
+    const assistantMessageIds = completedMessageIds
+      ?? [...pendingTurn.textByMessageId.keys()].filter((messageId) => (
+        pendingTurn.roleByMessageId.get(messageId) === "assistant"
+      ))
+
+    for (const messageId of assistantMessageIds) {
+      const text = pendingTurn.textByMessageId.get(messageId)
+      const trimmed = text?.trim()
       if (!trimmed || pendingTurn.completedMessages.has(messageId)) continue
       pendingTurn.completedMessages.add(messageId)
       pendingTurn.queue.push({

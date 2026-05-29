@@ -120,7 +120,7 @@ describe("OpenCodeServerManager", () => {
     manager.stopAll()
   })
 
-  test("flushes accumulated text when the session goes idle before message completion", async () => {
+  test("flushes known assistant text when the session goes idle before message completion", async () => {
     const sse = createSseHarness()
     const manager = new OpenCodeServerManager({
       baseUrl: "http://127.0.0.1:1234",
@@ -136,6 +136,17 @@ describe("OpenCodeServerManager", () => {
     const turn = await manager.startTurn({ chatId: "chat-1", content: "hello" })
     const eventsPromise = collectStream(turn.stream)
 
+    sse.send({
+      type: "message.updated",
+      properties: {
+        sessionID: "session-1",
+        info: {
+          id: "message-1",
+          role: "assistant",
+          time: {},
+        },
+      },
+    })
     sse.send({
       type: "message.part.delta",
       properties: {
@@ -159,6 +170,75 @@ describe("OpenCodeServerManager", () => {
       kind: "assistant_text",
       text: "final text without message.updated",
     })
+
+    manager.stopAll()
+  })
+
+  test("does not render user message deltas as assistant text", async () => {
+    const sse = createSseHarness()
+    const manager = new OpenCodeServerManager({
+      baseUrl: "http://127.0.0.1:1234",
+      fetch: (async (url) => {
+        if (String(url).endsWith("/global/event")) return sse.response
+        if (String(url).includes("/session?")) return Response.json({ id: "session-1" })
+        if (String(url).endsWith("/session/session-1/prompt_async")) return Response.json({})
+        return new Response("not found", { status: 404 })
+      }) as typeof fetch,
+    })
+
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+    const turn = await manager.startTurn({ chatId: "chat-1", content: "Reply with exactly: first opencode check" })
+    const eventsPromise = collectStream(turn.stream)
+
+    sse.send({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "session-1",
+        messageID: "user-message",
+        partID: "user-part",
+        field: "text",
+        delta: "Reply with exactly: first opencode check",
+      },
+    })
+    sse.send({
+      type: "message.updated",
+      properties: {
+        sessionID: "session-1",
+        info: {
+          id: "user-message",
+          role: "user",
+          time: { completed: Date.now() },
+        },
+      },
+    })
+    sse.send({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "session-1",
+        messageID: "assistant-message",
+        partID: "assistant-part",
+        field: "text",
+        delta: "first opencode check",
+      },
+    })
+    sse.send({
+      type: "message.updated",
+      properties: {
+        sessionID: "session-1",
+        info: {
+          id: "assistant-message",
+          role: "assistant",
+          time: { completed: Date.now() },
+        },
+      },
+    })
+
+    const events = await eventsPromise
+    const assistantEntries = events
+      .filter((event) => event.type === "transcript" && event.entry.kind === "assistant_text")
+      .map((event) => event.entry.text)
+
+    expect(assistantEntries).toEqual(["first opencode check"])
 
     manager.stopAll()
   })
