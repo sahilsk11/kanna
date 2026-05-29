@@ -25,6 +25,8 @@ import {
   type RequestPermissionResponse,
   type ResumeSessionParams,
   type ResumeSessionResponse,
+  type SetSessionModelParams,
+  type SetSessionModelResponse,
   type SessionInfo,
   type SessionUpdate,
   type SessionUpdateNotification,
@@ -62,6 +64,7 @@ interface PendingTurn {
   resolved: boolean
   assistantText: string
   bufferedAssistantText: string
+  hasVisibleOutput: boolean
 }
 
 interface SessionContext {
@@ -71,6 +74,7 @@ interface SessionContext {
   pendingRequests: Map<HermesAcpRequestId, PendingRequest<unknown>>
   pendingTurn: PendingTurn | null
   sessionToken: string | null
+  defaultModelId: string | null
   stderrLines: string[]
   closed: boolean
 }
@@ -145,6 +149,21 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined
+}
+
+function modelIdFromConfigOptions(configOptions: unknown): string | null {
+  if (!Array.isArray(configOptions)) return null
+  for (const option of configOptions) {
+    const record = asRecord(option)
+    if (!record) continue
+    const id = typeof record.id === "string" ? record.id : ""
+    const category = typeof record.category === "string" ? record.category : ""
+    const currentValue = typeof record.currentValue === "string" ? record.currentValue.trim() : ""
+    if (currentValue && (id === "model" || category === "model")) {
+      return currentValue
+    }
+  }
+  return null
 }
 
 function textFromContentBlock(content: unknown): string {
@@ -466,6 +485,7 @@ export class HermesAcpManager {
       pendingRequests: new Map(),
       pendingTurn: null,
       sessionToken: null,
+      defaultModelId: null,
       stderrLines: [],
       closed: false,
     }
@@ -493,19 +513,22 @@ export class HermesAcpManager {
         mcpServers: [],
       } satisfies ForkSessionParams)
       context.sessionToken = response.sessionId || null
+      context.defaultModelId = modelIdFromConfigOptions(response.configOptions)
     } else if (args.sessionToken) {
-      await this.sendRequest<ResumeSessionResponse>(context, "session/resume", {
+      const response = await this.sendRequest<ResumeSessionResponse>(context, "session/resume", {
         cwd: args.cwd,
         sessionId: args.sessionToken,
         mcpServers: [],
       } satisfies ResumeSessionParams)
       context.sessionToken = args.sessionToken
+      context.defaultModelId = modelIdFromConfigOptions(response.configOptions)
     } else {
       const response = await this.sendRequest<NewSessionResponse>(context, "session/new", {
         cwd: args.cwd,
         mcpServers: [],
       } satisfies NewSessionParams)
       context.sessionToken = response.sessionId
+      context.defaultModelId = modelIdFromConfigOptions(response.configOptions)
     }
 
     return context.sessionToken ?? undefined
@@ -522,6 +545,7 @@ export class HermesAcpManager {
       pendingRequests: new Map(),
       pendingTurn: null,
       sessionToken: null,
+      defaultModelId: null,
       stderrLines: [],
       closed: false,
     }
@@ -567,21 +591,36 @@ export class HermesAcpManager {
       resolved: false,
       assistantText: "",
       bufferedAssistantText: "",
+      hasVisibleOutput: false,
     }
     context.pendingTurn = pendingTurn
 
-    void this.sendRequest<PromptResponse>(context, "session/prompt", {
-      sessionId: context.sessionToken,
-      messageId: randomUUID(),
-      prompt: [
-        {
-          type: "text",
-          text: args.content,
-        },
-      ],
-    } satisfies PromptParams)
-      .then((response) => this.handlePromptCompleted(context, response))
-      .catch((error) => this.failTurn(context, errorMessage(error)))
+    void this.prepareTurn(context, args.model)
+      .then((shouldPrompt) => {
+        if (!shouldPrompt || context.pendingTurn !== pendingTurn || pendingTurn.resolved) {
+          return null
+        }
+        return this.sendRequest<PromptResponse>(context, "session/prompt", {
+          sessionId: context.sessionToken!,
+          messageId: randomUUID(),
+          prompt: [
+            {
+              type: "text",
+              text: args.content,
+            },
+          ],
+        } satisfies PromptParams)
+      })
+      .then((response) => {
+        if (response) {
+          this.handlePromptCompleted(context, response)
+        }
+      })
+      .catch((error) => {
+        if (context.pendingTurn === pendingTurn && !pendingTurn.resolved) {
+          this.failTurn(context, errorMessage(error))
+        }
+      })
 
     return {
       provider: this.providerConfig.provider,
@@ -761,6 +800,7 @@ export class HermesAcpManager {
         const hidden = this.providerConfig.provider === "hermes" && isHermesInternalAssistantText(text)
         if (!hidden) {
           pendingTurn.assistantText += text
+          pendingTurn.hasVisibleOutput = true
         }
         if (!hidden && this.providerConfig.provider === "opencode") {
           pendingTurn.bufferedAssistantText += text
@@ -800,6 +840,7 @@ export class HermesAcpManager {
           : []
         if (entries.length === 0) return
         this.flushBufferedAssistantText(pendingTurn)
+        pendingTurn.hasVisibleOutput = true
         pendingTurn.queue.push({
           type: "transcript",
           entry: planToolCall(this.providerConfig, entries),
@@ -839,6 +880,7 @@ export class HermesAcpManager {
   private handleToolUpdate(pendingTurn: PendingTurn, update: ToolCallUpdatePayload) {
     if (!pendingTurn.startedToolIds.has(update.toolCallId)) {
       pendingTurn.startedToolIds.add(update.toolCallId)
+      pendingTurn.hasVisibleOutput = true
       pendingTurn.queue.push({
         type: "transcript",
         entry: toolCallEntry(this.providerConfig, update),
@@ -860,6 +902,10 @@ export class HermesAcpManager {
 
     this.flushBufferedAssistantText(pendingTurn)
 
+    const isCancelled = response.stopReason === "cancelled"
+    const isRefusal = response.stopReason === "refusal"
+    const noOutputMessage = this.getNoOutputErrorMessage(context, pendingTurn, response)
+
     const usage = normalizeUsageFromPrompt(response.usage)
     if (usage) {
       pendingTurn.queue.push({
@@ -871,8 +917,7 @@ export class HermesAcpManager {
       })
     }
 
-    const isCancelled = response.stopReason === "cancelled"
-    const isError = response.stopReason === "refusal"
+    const isError = isRefusal || Boolean(noOutputMessage)
     pendingTurn.queue.push({
       type: "transcript",
       entry: timestamped({
@@ -880,11 +925,38 @@ export class HermesAcpManager {
         subtype: isCancelled ? "cancelled" : isError ? "error" : "success",
         isError,
         durationMs: 0,
-        result: isError ? response.stopReason : "",
+        result: noOutputMessage ?? (isRefusal ? response.stopReason : ""),
       }),
     })
     pendingTurn.queue.finish()
     context.pendingTurn = null
+  }
+
+  private async prepareTurn(context: SessionContext, model: string | undefined) {
+    if (this.providerConfig.provider !== "opencode" || !model) return true
+    if (!context.sessionToken) {
+      throw new Error(`${this.providerConfig.displayName} session not initialized`)
+    }
+    const modelId = model === DEFAULT_OPENCODE_MODEL ? context.defaultModelId : model
+    if (!modelId) return true
+    await this.sendRequest<SetSessionModelResponse>(context, "session/set_model", {
+      sessionId: context.sessionToken,
+      modelId,
+    } satisfies SetSessionModelParams)
+    return true
+  }
+
+  private getNoOutputErrorMessage(
+    context: SessionContext,
+    pendingTurn: PendingTurn,
+    response: PromptResponse
+  ) {
+    if (response.stopReason !== "end_turn") return null
+    if (pendingTurn.hasVisibleOutput) return null
+    const stderr = context.stderrLines.at(-1)
+    return stderr
+      ? `${this.providerConfig.displayName} returned no output. Last ${this.providerConfig.displayName} log: ${stderr}`
+      : `${this.providerConfig.displayName} returned no output. Check ${this.providerConfig.displayName} authentication and provider configuration.`
   }
 
   private failTurn(context: SessionContext, message: string) {
