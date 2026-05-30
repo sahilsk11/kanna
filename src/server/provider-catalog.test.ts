@@ -81,6 +81,16 @@ not-a-model
     ])
   })
 
+  test("can filter OpenCode model ids to OpenCode Go", () => {
+    expect(parseOpenCodeModelsOutput(`
+opencode/big-pickle
+opencode-go/deepseek-v4-pro
+openrouter/deepseek/deepseek-v4-pro
+    `, ["opencode-go"])).toEqual([
+      { id: "opencode-go/deepseek-v4-pro", label: "opencode-go/deepseek-v4-pro", supportsEffort: false },
+    ])
+  })
+
   test("resolves Claude API model ids for 1m context window", () => {
     expect(resolveClaudeApiModelId("claude-opus-4-7", "1m")).toBe("claude-opus-4-7[1m]")
     expect(resolveClaudeApiModelId("claude-sonnet-4-6", "200k")).toBe("claude-sonnet-4-6")
