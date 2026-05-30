@@ -58,6 +58,7 @@ interface ServerState {
   abortController: AbortController
   ready: Promise<void>
   resolveReady: () => void
+  stderrLines: string[]
   stopped: boolean
 }
 
@@ -279,7 +280,7 @@ export class OpenCodeServerManager {
   private readonly spawnProcess: SpawnOpenCodeServer
   private readonly configuredBaseUrl: string | null
   private readonly servers = new Map<string, ServerState>()
-  private stderrLines: string[] = []
+  private readonly startingServers = new Map<string, Promise<ServerState>>()
 
   constructor(args: {
     baseUrl?: string
@@ -411,6 +412,8 @@ export class OpenCodeServerManager {
     const key = this.serverKey(cwd)
     const existing = this.servers.get(key)
     if (existing && !existing.stopped) return existing
+    const starting = this.startingServers.get(key)
+    if (starting) return starting
 
     if (this.configuredBaseUrl) {
       const server = this.createServerState(cwd, this.configuredBaseUrl, null)
@@ -420,14 +423,27 @@ export class OpenCodeServerManager {
       return server
     }
 
+    const next = this.startSpawnedServer(cwd, key)
+    this.startingServers.set(key, next)
+    try {
+      return await next
+    } finally {
+      if (this.startingServers.get(key) === next) {
+        this.startingServers.delete(key)
+      }
+    }
+  }
+
+  private async startSpawnedServer(cwd: string, key: string): Promise<ServerState> {
+    const stderrLines: string[] = []
     const child = this.spawnProcess(cwd)
-    const baseUrl = await this.waitForServerUrl(child)
-    const server = this.createServerState(cwd, baseUrl, child)
+    const baseUrl = await this.waitForServerUrl(child, stderrLines)
+    const server = this.createServerState(cwd, baseUrl, child, stderrLines)
     this.servers.set(key, server)
     child.on("error", (error) => this.failServer(server, error.message))
     child.on("close", (code) => {
       if (server.stopped) return
-      const message = this.stderrLines.at(-1) || `OpenCode server exited with code ${code ?? 1}`
+      const message = server.stderrLines.at(-1) || `OpenCode server exited with code ${code ?? 1}`
       this.failServer(server, message)
     })
     this.startSseLoop(server)
@@ -456,7 +472,12 @@ export class OpenCodeServerManager {
     }
   }
 
-  private createServerState(cwd: string, baseUrl: string, child: OpenCodeServerProcess | null): ServerState {
+  private createServerState(
+    cwd: string,
+    baseUrl: string,
+    child: OpenCodeServerProcess | null,
+    stderrLines: string[] = []
+  ): ServerState {
     let resolveReady: () => void = () => {}
     const ready = new Promise<void>((resolve) => {
       resolveReady = resolve
@@ -468,11 +489,12 @@ export class OpenCodeServerManager {
       abortController: new AbortController(),
       ready,
       resolveReady,
+      stderrLines,
       stopped: false,
     }
   }
 
-  private async waitForServerUrl(child: OpenCodeServerProcess): Promise<string> {
+  private async waitForServerUrl(child: OpenCodeServerProcess, stderrLines: string[]): Promise<string> {
     const urlPattern = /opencode server listening on (https?:\/\/\S+)/
     return await new Promise((resolve, reject) => {
       let settled = false
@@ -491,7 +513,7 @@ export class OpenCodeServerManager {
       const stderr = createInterface({ input: child.stderr })
 
       const handleLine = (line: string) => {
-        if (line.trim()) this.stderrLines.push(line.trim())
+        if (line.trim()) stderrLines.push(line.trim())
         if (settled) return
         const match = line.match(urlPattern)
         if (!match) return
@@ -514,7 +536,7 @@ export class OpenCodeServerManager {
         if (settled) return
         settled = true
         clearTimeout(timeout)
-        reject(new Error(this.stderrLines.at(-1) || `OpenCode server exited with code ${code ?? 1}`))
+        reject(new Error(stderrLines.at(-1) || `OpenCode server exited with code ${code ?? 1}`))
       })
     })
   }
@@ -541,7 +563,7 @@ export class OpenCodeServerManager {
           attempts += 1
           await new Promise((resolve) => setTimeout(resolve, delayMs))
           if (error instanceof Error) {
-            this.stderrLines.push(error.message)
+            server.stderrLines.push(error.message)
           }
         }
       }
@@ -561,7 +583,7 @@ export class OpenCodeServerManager {
         while (boundary >= 0) {
           const rawEvent = buffer.slice(0, boundary)
           buffer = buffer.slice(boundary + 2)
-          this.handleSseEvent(rawEvent)
+          this.handleSseEvent(rawEvent, signal)
           boundary = buffer.indexOf("\n\n")
         }
       }
@@ -570,7 +592,7 @@ export class OpenCodeServerManager {
     }
   }
 
-  private handleSseEvent(rawEvent: string) {
+  private handleSseEvent(rawEvent: string, signal: AbortSignal) {
     const data = rawEvent
       .split(/\r?\n/)
       .filter((line) => line.startsWith("data:"))
@@ -580,19 +602,20 @@ export class OpenCodeServerManager {
     const parsed = parseJson(data)
     const event = parseOpenCodeEvent(parsed)
     if (!event) {
-      this.recordUnknownEvent(parsed)
+      this.recordUnknownEvent(parsed, signal)
       return
     }
     this.dispatch(event)
   }
 
-  private recordUnknownEvent(parsed: unknown) {
+  private recordUnknownEvent(parsed: unknown, signal: AbortSignal) {
     const payload = asRecord(asRecord(parsed)?.payload ?? parsed)
     const type = asString(payload?.type)
     if (!type) return
     const line = `Ignored OpenCode server event: ${type}`
-    if (!this.stderrLines.includes(line)) {
-      this.stderrLines.push(line)
+    for (const server of this.servers.values()) {
+      if (server.abortController.signal !== signal || server.stderrLines.includes(line)) continue
+      server.stderrLines.push(line)
     }
   }
 
@@ -613,7 +636,7 @@ export class OpenCodeServerManager {
     switch (event.type) {
       case "message.part.delta":
         if (event.field !== "text") {
-          this.recordSkippedDeltaField(event.field)
+          this.recordSkippedDeltaField(context, event.field)
           return
         }
         if (!event.delta) return
@@ -644,11 +667,12 @@ export class OpenCodeServerManager {
     }
   }
 
-  private recordSkippedDeltaField(field: string) {
+  private recordSkippedDeltaField(context: SessionContext, field: string) {
     if (!field) return
     const line = `Ignored OpenCode message.part.delta field: ${field}`
-    if (!this.stderrLines.includes(line)) {
-      this.stderrLines.push(line)
+    const server = this.servers.get(this.serverKey(context.cwd))
+    if (server && !server.stderrLines.includes(line)) {
+      server.stderrLines.push(line)
     }
   }
 
@@ -742,7 +766,8 @@ export class OpenCodeServerManager {
   }
 
   private async abortSession(context: SessionContext) {
-    const server = await this.ensureServer(context.cwd)
+    const server = this.servers.get(this.serverKey(context.cwd))
+    if (!server || server.stopped) return
     await this.fetchImpl(`${server.baseUrl}/session/${encodeURIComponent(context.sessionToken)}/abort`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -754,7 +779,7 @@ export class OpenCodeServerManager {
     this.stopServer(server, false)
     for (const context of this.sessions.values()) {
       if (this.serverKey(context.cwd) !== this.serverKey(server.cwd)) continue
-      this.completeTurn(context, true, message)
+      this.completeTurn(context, true, message, undefined, true)
     }
   }
 }

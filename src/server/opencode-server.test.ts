@@ -443,6 +443,156 @@ describe("OpenCodeServerManager", () => {
     manager.stopAll()
   })
 
+  test("reuses an in-flight server startup for concurrent sessions in the same cwd", async () => {
+    const sse = createSseHarness()
+    const processes: ReturnType<typeof createFakeProcess>[] = []
+    let sessionSequence = 0
+    const manager = new OpenCodeServerManager({
+      spawnProcess: () => {
+        const process = createFakeProcess()
+        processes.push(process)
+        return process
+      },
+      fetch: (async (url) => {
+        if (String(url).endsWith("/global/event")) return sse.response
+        if (String(url).includes("/session?")) return Response.json({ id: `session-${++sessionSequence}` })
+        return new Response("not found", { status: 404 })
+      }) as typeof fetch,
+    })
+
+    const first = manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+    const second = manager.startSession({ chatId: "chat-2", cwd: "/tmp/project", sessionToken: null })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(processes).toHaveLength(1)
+
+    processes[0]?.stdout.write("opencode server listening on http://127.0.0.1:1\n")
+
+    await expect(Promise.all([first, second])).resolves.toEqual(["session-1", "session-2"])
+    expect(processes).toHaveLength(1)
+
+    manager.stopAll()
+  })
+
+  test("uses diagnostics from the crashed server when multiple servers are running", async () => {
+    const sse = createSseHarness()
+    const processes: ReturnType<typeof createFakeProcess>[] = []
+    const manager = new OpenCodeServerManager({
+      spawnProcess: () => {
+        const process = createFakeProcess()
+        processes.push(process)
+        const port = processes.length
+        queueMicrotask(() => {
+          process.stderr.write(`server-${port}-diagnostic\n`)
+          process.stdout.write(`opencode server listening on http://127.0.0.1:${port}\n`)
+        })
+        return process
+      },
+      fetch: (async (url) => {
+        if (String(url).endsWith("/global/event")) return sse.response
+        if (String(url).includes("/session?")) {
+          const directory = new URL(String(url)).searchParams.get("directory")
+          return Response.json({ id: directory?.includes("two") ? "session-2" : "session-1" })
+        }
+        if (String(url).endsWith("/prompt_async")) return Response.json({})
+        return new Response("not found", { status: 404 })
+      }) as typeof fetch,
+    })
+
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/one", sessionToken: null })
+    await manager.startSession({ chatId: "chat-2", cwd: "/tmp/two", sessionToken: null })
+    const turn = await manager.startTurn({ chatId: "chat-1", content: "hello" })
+    const eventsPromise = collectStream(turn.stream)
+
+    processes[0]?.close(1)
+
+    const events = await eventsPromise
+    const result = events.find((event) => event.type === "transcript" && event.entry.kind === "result")
+    expect(result?.entry.result).not.toBe("server-2-diagnostic")
+
+    manager.stopAll()
+  })
+
+  test("flushes buffered text with unknown role when the OpenCode server crashes", async () => {
+    const sse = createSseHarness()
+    const processes: ReturnType<typeof createFakeProcess>[] = []
+    const manager = new OpenCodeServerManager({
+      spawnProcess: () => {
+        const process = createFakeProcess()
+        processes.push(process)
+        queueMicrotask(() => {
+          process.stdout.write("opencode server listening on http://127.0.0.1:1\n")
+        })
+        return process
+      },
+      fetch: (async (url) => {
+        if (String(url).endsWith("/global/event")) return sse.response
+        if (String(url).includes("/session?")) return Response.json({ id: "session-1" })
+        if (String(url).endsWith("/prompt_async")) return Response.json({})
+        return new Response("not found", { status: 404 })
+      }) as typeof fetch,
+    })
+
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+    const turn = await manager.startTurn({ chatId: "chat-1", content: "hello" })
+    const eventsPromise = collectStream(turn.stream)
+
+    sse.send({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "session-1",
+        messageID: "message-1",
+        partID: "part-1",
+        field: "text",
+        delta: "partial answer",
+      },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    processes[0]?.close(1)
+
+    const events = await eventsPromise
+    const assistant = events.find((event) => event.type === "transcript" && event.entry.kind === "assistant_text")
+    const result = events.find((event) => event.type === "transcript" && event.entry.kind === "result")
+    expect(assistant?.entry.text).toBe("partial answer")
+    expect(result?.entry.isError).toBe(true)
+
+    manager.stopAll()
+  })
+
+  test("does not spawn a replacement server just to abort a dead session", async () => {
+    const sse = createSseHarness()
+    const processes: ReturnType<typeof createFakeProcess>[] = []
+    const manager = new OpenCodeServerManager({
+      spawnProcess: () => {
+        const process = createFakeProcess()
+        processes.push(process)
+        queueMicrotask(() => {
+          process.stdout.write(`opencode server listening on http://127.0.0.1:${processes.length}\n`)
+        })
+        return process
+      },
+      fetch: (async (url) => {
+        if (String(url).endsWith("/global/event")) return sse.response
+        if (String(url).includes("/session?")) return Response.json({ id: "session-1" })
+        return new Response("not found", { status: 404 })
+      }) as typeof fetch,
+    })
+
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+    processes[0]?.close(1)
+
+    await (manager as any).abortSession({
+      chatId: "chat-1",
+      cwd: "/tmp/project",
+      sessionToken: "session-1",
+      pendingTurn: null,
+      closed: false,
+    })
+
+    expect(processes).toHaveLength(1)
+
+    manager.stopAll()
+  })
+
   test("maps reasoning and tool part updates without persisting raw thoughts", async () => {
     const sse = createSseHarness()
     const manager = new OpenCodeServerManager({
