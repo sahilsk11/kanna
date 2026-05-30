@@ -604,6 +604,18 @@ describe("read models", () => {
       sessionToken: "thread-1",
       lastTurnOutcome: null,
     })
+    state.chatsById.set("chat-opencode", {
+      id: "chat-opencode",
+      projectId: "project-1",
+      title: "OpenCode",
+      createdAt: 4,
+      updatedAt: 4,
+      unread: false,
+      provider: "opencode",
+      planMode: false,
+      sessionToken: "opencode-session",
+      lastTurnOutcome: null,
+    })
 
     const sidebar = deriveSidebarData(
       state,
@@ -614,5 +626,6 @@ describe("read models", () => {
     expect(sidebar.projectGroups[0]?.chats.find((chat) => chat.chatId === "chat-active")?.canFork).toBeUndefined()
     expect(sidebar.projectGroups[0]?.chats.find((chat) => chat.chatId === "chat-pending")?.canFork).toBe(true)
     expect(sidebar.projectGroups[0]?.chats.find((chat) => chat.chatId === "chat-draining")?.canFork).toBeUndefined()
+    expect(sidebar.projectGroups[0]?.chats.find((chat) => chat.chatId === "chat-opencode")?.canFork).toBeUndefined()
   })
 })

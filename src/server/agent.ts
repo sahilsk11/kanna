@@ -17,6 +17,7 @@ import type { ClientCommand } from "../shared/protocol"
 import { EventStore } from "./event-store"
 import type { AnalyticsReporter } from "./analytics"
 import { NoopAnalyticsReporter } from "./analytics"
+import { AsyncQueue } from "./async-queue"
 import { CodexAppServerManager } from "./codex-app-server"
 import { type GenerateChatTitleResult, generateTitleForChatDetailed } from "./generate-title"
 import type { HarnessEvent, HarnessToolRequest, HarnessTurn } from "./harness-types"
@@ -517,53 +518,6 @@ async function* createClaudeHarnessStream(q: Query): AsyncGenerator<HarnessEvent
   }
 }
 
-class AsyncMessageQueue<T> implements AsyncIterable<T> {
-  private readonly values: T[] = []
-  private readonly waiters: Array<(result: IteratorResult<T>) => void> = []
-  private closed = false
-
-  push(value: T) {
-    if (this.closed) {
-      throw new Error("Cannot push to a closed queue")
-    }
-
-    const waiter = this.waiters.shift()
-    if (waiter) {
-      waiter({ done: false, value })
-      return
-    }
-
-    this.values.push(value)
-  }
-
-  close() {
-    if (this.closed) return
-    this.closed = true
-    while (this.waiters.length > 0) {
-      const waiter = this.waiters.shift()
-      waiter?.({ done: true, value: undefined as never })
-    }
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return {
-      next: async () => {
-        if (this.values.length > 0) {
-          return { done: false, value: this.values.shift() as T }
-        }
-
-        if (this.closed) {
-          return { done: true, value: undefined as never }
-        }
-
-        return await new Promise<IteratorResult<T>>((resolve) => {
-          this.waiters.push(resolve)
-        })
-      },
-    }
-  }
-}
-
 async function startClaudeSession(args: {
   localPath: string
   model: string
@@ -628,7 +582,7 @@ async function startClaudeSession(args: {
     } satisfies PermissionResult
   }
 
-  const promptQueue = new AsyncMessageQueue<SDKUserMessage>()
+  const promptQueue = new AsyncQueue<SDKUserMessage>({ pushAfterClose: "throw" })
 
   const q = query({
     prompt: promptQueue,
@@ -1033,43 +987,14 @@ export class AgentCoordinator {
         provider: args.provider,
         model: args.model,
       })
-    } else if (args.provider === "opencode") {
-      logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
-      const sessionToken = await this.opencodeManager.startSession({
-        chatId: args.chatId,
-        cwd: project.localPath,
-        sessionToken: chat.sessionToken,
-        pendingForkSessionToken: chat.pendingForkSessionToken,
-      })
-      if (chat.pendingForkSessionToken && sessionToken) {
-        await this.store.setPendingForkSessionToken(args.chatId, null)
-      }
-      logSendToStartingProfile(args.profile, "start_turn.session_ready", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
-      turn = await this.opencodeManager.startTurn({
-        chatId: args.chatId,
-        content: buildPromptText(args.content, args.attachments),
-        model: args.model,
-      })
-      logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
     } else {
+      const manager = args.provider === "opencode" ? this.opencodeManager : this.hermesManager
       logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
         chatId: args.chatId,
         provider: args.provider,
         model: args.model,
       })
-      const sessionToken = await this.hermesManager.startSession({
+      const sessionToken = await manager.startSession({
         chatId: args.chatId,
         cwd: project.localPath,
         sessionToken: chat.sessionToken,
@@ -1083,7 +1008,7 @@ export class AgentCoordinator {
         provider: args.provider,
         model: args.model,
       })
-      turn = await this.hermesManager.startTurn({
+      turn = await manager.startTurn({
         chatId: args.chatId,
         content: buildPromptText(args.content, args.attachments),
         model: args.model,
@@ -1352,6 +1277,9 @@ export class AgentCoordinator {
     }
     if (!chat.provider) {
       throw new Error("Chat must have a provider before forking")
+    }
+    if (chat.provider === "opencode") {
+      throw new Error("OpenCode chats cannot be forked yet")
     }
     if (!chat.sessionToken && !chat.pendingForkSessionToken) {
       throw new Error("Chat has no session to fork")

@@ -5,6 +5,7 @@ import { createInterface } from "node:readline"
 import { fileURLToPath } from "node:url"
 import type { Readable, Writable } from "node:stream"
 import { DEFAULT_HERMES_MODEL, type AgentProvider, type ContextWindowUsageSnapshot, type TodoItem, type TranscriptEntry } from "../shared/types"
+import { AsyncQueue } from "./async-queue"
 import type { HarnessEvent, HarnessTurn } from "./harness-types"
 import {
   type CancelParams,
@@ -61,7 +62,6 @@ interface PendingTurn {
   startedToolIds: Set<string>
   resolved: boolean
   assistantText: string
-  bufferedAssistantText: string
   hasVisibleOutput: boolean
   hasThinkingStatus: boolean
 }
@@ -386,47 +386,6 @@ function chooseDenyOutcome(options: PermissionOption[]): RequestPermissionRespon
   }
 }
 
-class AsyncQueue<T> implements AsyncIterable<T> {
-  private values: T[] = []
-  private resolvers: Array<(result: IteratorResult<T>) => void> = []
-  private done = false
-
-  push(value: T) {
-    if (this.done) return
-    const resolver = this.resolvers.shift()
-    if (resolver) {
-      resolver({ value, done: false })
-      return
-    }
-    this.values.push(value)
-  }
-
-  finish() {
-    if (this.done) return
-    this.done = true
-    while (this.resolvers.length > 0) {
-      const resolver = this.resolvers.shift()
-      resolver?.({ value: undefined as T, done: true })
-    }
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return {
-      next: () => {
-        if (this.values.length > 0) {
-          return Promise.resolve({ value: this.values.shift() as T, done: false })
-        }
-        if (this.done) {
-          return Promise.resolve({ value: undefined as T, done: true })
-        }
-        return new Promise<IteratorResult<T>>((resolve) => {
-          this.resolvers.push(resolve)
-        })
-      },
-    }
-  }
-}
-
 export class HermesAcpManager {
   private readonly sessions = new Map<string, SessionContext>()
   private readonly spawnProcess: SpawnAcp
@@ -568,7 +527,6 @@ export class HermesAcpManager {
       startedToolIds: new Set(),
       resolved: false,
       assistantText: "",
-      bufferedAssistantText: "",
       hasVisibleOutput: false,
       hasThinkingStatus: false,
     }
@@ -798,7 +756,6 @@ export class HermesAcpManager {
       }
       case "tool_call":
       case "tool_call_update":
-        this.flushBufferedAssistantText(pendingTurn)
         this.handleToolUpdate(pendingTurn, update as ToolCallUpdatePayload)
         return
       case "plan": {
@@ -806,7 +763,6 @@ export class HermesAcpManager {
           ? (update as { entries: PlanEntry[] }).entries
           : []
         if (entries.length === 0) return
-        this.flushBufferedAssistantText(pendingTurn)
         pendingTurn.hasVisibleOutput = true
         pendingTurn.queue.push({
           type: "transcript",
@@ -817,7 +773,6 @@ export class HermesAcpManager {
       case "usage_update": {
         const usage = normalizeUsageFromUpdate(update)
         if (!usage) return
-        this.flushBufferedAssistantText(pendingTurn)
         pendingTurn.queue.push({
           type: "transcript",
           entry: timestamped({
@@ -830,18 +785,6 @@ export class HermesAcpManager {
       default:
         return
     }
-  }
-
-  private flushBufferedAssistantText(pendingTurn: PendingTurn) {
-    if (!pendingTurn.bufferedAssistantText) return
-    pendingTurn.queue.push({
-      type: "transcript",
-      entry: timestamped({
-        kind: "assistant_text",
-        text: pendingTurn.bufferedAssistantText,
-      }),
-    })
-    pendingTurn.bufferedAssistantText = ""
   }
 
   private handleToolUpdate(pendingTurn: PendingTurn, update: ToolCallUpdatePayload) {
@@ -866,8 +809,6 @@ export class HermesAcpManager {
     const pendingTurn = context.pendingTurn
     if (!pendingTurn || pendingTurn.resolved) return
     pendingTurn.resolved = true
-
-    this.flushBufferedAssistantText(pendingTurn)
 
     const isCancelled = response.stopReason === "cancelled"
     const isRefusal = response.stopReason === "refusal"

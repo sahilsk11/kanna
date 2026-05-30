@@ -1488,6 +1488,19 @@ describe("AgentCoordinator Hermes integration", () => {
     expect(store.chat.sessionToken).toBe("opencode-session-1")
   })
 
+  test("rejects OpenCode chat forks before creating a pending fork", async () => {
+    const store = createFakeStore()
+    store.chat.provider = "opencode"
+    store.chat.sessionToken = "opencode-session-1"
+
+    const coordinator = new AgentCoordinator({
+      store: store as never,
+      onStateChange: () => {},
+    })
+
+    await expect(coordinator.forkChat("chat-1")).rejects.toThrow("OpenCode chats cannot be forked yet")
+  })
+
   test("starts Hermes fork sessions with the pending fork token and clears it after start", async () => {
     const events = new AsyncEventQueue<any>()
     const hermesSessionCalls: Array<{

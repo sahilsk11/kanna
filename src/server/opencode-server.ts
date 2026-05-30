@@ -4,6 +4,7 @@ import { createInterface } from "node:readline"
 import type { Readable } from "node:stream"
 import { DEFAULT_OPENCODE_MODEL, type AgentProvider, type TranscriptEntry } from "../shared/types"
 import { normalizeToolCall } from "../shared/tools"
+import { AsyncQueue } from "./async-queue"
 import type { HarnessEvent, HarnessTurn } from "./harness-types"
 
 export interface OpenCodeServerProcess {
@@ -272,47 +273,6 @@ function parseOpenCodeEvent(raw: unknown): OpenCodeEvent | null {
   }
 }
 
-class AsyncQueue<T> implements AsyncIterable<T> {
-  private values: T[] = []
-  private resolvers: Array<(result: IteratorResult<T>) => void> = []
-  private done = false
-
-  push(value: T) {
-    if (this.done) return
-    const resolver = this.resolvers.shift()
-    if (resolver) {
-      resolver({ value, done: false })
-      return
-    }
-    this.values.push(value)
-  }
-
-  finish() {
-    if (this.done) return
-    this.done = true
-    while (this.resolvers.length > 0) {
-      const resolver = this.resolvers.shift()
-      resolver?.({ value: undefined as T, done: true })
-    }
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return {
-      next: () => {
-        if (this.values.length > 0) {
-          return Promise.resolve({ value: this.values.shift() as T, done: false })
-        }
-        if (this.done) {
-          return Promise.resolve({ value: undefined as T, done: true })
-        }
-        return new Promise<IteratorResult<T>>((resolve) => {
-          this.resolvers.push(resolve)
-        })
-      },
-    }
-  }
-}
-
 export class OpenCodeServerManager {
   private readonly sessions = new Map<string, SessionContext>()
   private readonly fetchImpl: FetchImpl
@@ -337,6 +297,10 @@ export class OpenCodeServerManager {
   }
 
   async startSession(args: StartOpenCodeSessionArgs): Promise<string | undefined> {
+    if (args.pendingForkSessionToken) {
+      throw new Error("OpenCode server sessions cannot be forked yet")
+    }
+
     const existing = this.sessions.get(args.chatId)
     if (existing && !existing.closed && existing.cwd === args.cwd && !args.pendingForkSessionToken) {
       return existing.sessionToken
@@ -416,6 +380,9 @@ export class OpenCodeServerManager {
   stopSession(chatId: string) {
     const context = this.sessions.get(chatId)
     if (!context) return
+    if (context.pendingTurn && !context.pendingTurn.resolved) {
+      void this.abortSession(context).catch(() => undefined)
+    }
     context.closed = true
     context.pendingTurn?.queue.finish()
     context.pendingTurn = null
@@ -592,8 +559,21 @@ export class OpenCodeServerManager {
     if (!data) return
     const parsed = parseJson(data)
     const event = parseOpenCodeEvent(parsed)
-    if (!event) return
+    if (!event) {
+      this.recordUnknownEvent(parsed)
+      return
+    }
     this.dispatch(event)
+  }
+
+  private recordUnknownEvent(parsed: unknown) {
+    const payload = asRecord(asRecord(parsed)?.payload ?? parsed)
+    const type = asString(payload?.type)
+    if (!type) return
+    const line = `Ignored OpenCode server event: ${type}`
+    if (!this.stderrLines.includes(line)) {
+      this.stderrLines.push(line)
+    }
   }
 
   private dispatch(event: OpenCodeEvent) {
@@ -612,7 +592,11 @@ export class OpenCodeServerManager {
 
     switch (event.type) {
       case "message.part.delta":
-        if (event.field !== "text" || !event.delta) return
+        if (event.field !== "text") {
+          this.recordSkippedDeltaField(event.field)
+          return
+        }
+        if (!event.delta) return
         pendingTurn.textByMessageId.set(
           event.messageId,
           `${pendingTurn.textByMessageId.get(event.messageId) ?? ""}${event.delta}`
@@ -640,6 +624,14 @@ export class OpenCodeServerManager {
     }
   }
 
+  private recordSkippedDeltaField(field: string) {
+    if (!field) return
+    const line = `Ignored OpenCode message.part.delta field: ${field}`
+    if (!this.stderrLines.includes(line)) {
+      this.stderrLines.push(line)
+    }
+  }
+
   private handlePartUpdated(pendingTurn: PendingTurn, event: Extract<OpenCodeEvent, { type: "message.part.updated" }>) {
     if (event.partType === "reasoning") {
       if (!pendingTurn.hasThinkingStatus) {
@@ -652,7 +644,7 @@ export class OpenCodeServerManager {
       return
     }
 
-    if (event.partType === "text" && event.text?.trim()) {
+    if (event.partType === "text" && event.text?.trim() && !pendingTurn.textByMessageId.get(event.messageId)?.trim()) {
       pendingTurn.textByMessageId.set(event.messageId, event.text)
       return
     }

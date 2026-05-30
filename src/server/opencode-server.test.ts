@@ -243,6 +243,99 @@ describe("OpenCodeServerManager", () => {
     manager.stopAll()
   })
 
+  test("keeps accumulated delta text when a later part update is stale", async () => {
+    const sse = createSseHarness()
+    const manager = new OpenCodeServerManager({
+      baseUrl: "http://127.0.0.1:1234",
+      fetch: (async (url) => {
+        if (String(url).endsWith("/global/event")) return sse.response
+        if (String(url).includes("/session?")) return Response.json({ id: "session-1" })
+        if (String(url).endsWith("/session/session-1/prompt_async")) return Response.json({})
+        return new Response("not found", { status: 404 })
+      }) as typeof fetch,
+    })
+
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+    const turn = await manager.startTurn({ chatId: "chat-1", content: "hello" })
+    const eventsPromise = collectStream(turn.stream)
+
+    sse.send({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "session-1",
+        messageID: "message-1",
+        partID: "part-1",
+        field: "text",
+        delta: "new streamed text",
+      },
+    })
+    sse.send({
+      type: "message.part.updated",
+      properties: {
+        sessionID: "session-1",
+        part: {
+          id: "part-1",
+          messageID: "message-1",
+          type: "text",
+          text: "stale snapshot",
+        },
+      },
+    })
+    sse.send({
+      type: "message.updated",
+      properties: {
+        sessionID: "session-1",
+        info: {
+          id: "message-1",
+          role: "assistant",
+          time: { completed: Date.now() },
+        },
+      },
+    })
+
+    const events = await eventsPromise
+    const assistant = events.find((event) => event.type === "transcript" && event.entry.kind === "assistant_text")
+    expect(assistant?.entry.text).toBe("new streamed text")
+
+    manager.stopAll()
+  })
+
+  test("rejects pending fork tokens because OpenCode server forking is unsupported", async () => {
+    const manager = new OpenCodeServerManager({
+      baseUrl: "http://127.0.0.1:1234",
+    })
+
+    await expect(manager.startSession({
+      chatId: "chat-1",
+      cwd: "/tmp/project",
+      sessionToken: null,
+      pendingForkSessionToken: "parent-session",
+    })).rejects.toThrow("OpenCode server sessions cannot be forked yet")
+  })
+
+  test("aborts an active OpenCode turn when stopping the session", async () => {
+    const sse = createSseHarness()
+    const requests: Array<{ url: string; init?: RequestInit }> = []
+    const manager = new OpenCodeServerManager({
+      baseUrl: "http://127.0.0.1:1234",
+      fetch: (async (url, init) => {
+        requests.push({ url: String(url), init })
+        if (String(url).endsWith("/global/event")) return sse.response
+        if (String(url).includes("/session?")) return Response.json({ id: "session-1" })
+        if (String(url).endsWith("/session/session-1/prompt_async")) return Response.json({})
+        if (String(url).endsWith("/session/session-1/abort")) return Response.json({})
+        return new Response("not found", { status: 404 })
+      }) as typeof fetch,
+    })
+
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+    await manager.startTurn({ chatId: "chat-1", content: "hello" })
+    manager.stopSession("chat-1")
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(requests.some((request) => request.url.endsWith("/session/session-1/abort"))).toBe(true)
+  })
+
   test("maps reasoning and tool part updates without persisting raw thoughts", async () => {
     const sse = createSseHarness()
     const manager = new OpenCodeServerManager({
