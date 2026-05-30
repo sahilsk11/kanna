@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { OpenCodeServerManager } from "./opencode-server"
+import { PassThrough } from "node:stream"
+import { OpenCodeServerManager, type OpenCodeServerProcess } from "./opencode-server"
 
 function ssePayload(payload: unknown) {
   return new TextEncoder().encode(`data: ${JSON.stringify({ payload })}\n\n`)
@@ -32,6 +33,35 @@ async function collectStream(stream: AsyncIterable<any>) {
     items.push(item)
   }
   return items
+}
+
+function createFakeProcess(): OpenCodeServerProcess & {
+  stdout: PassThrough
+  stderr: PassThrough
+  close(code: number): void
+  emitError(error: Error): void
+} {
+  const closeListeners: Array<(code: number | null) => void> = []
+  const errorListeners: Array<(error: Error) => void> = []
+  return {
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    killed: false,
+    kill() {
+      this.killed = true
+    },
+    on(event: "close" | "error", listener: ((code: number | null) => void) | ((error: Error) => void)) {
+      if (event === "close") closeListeners.push(listener as (code: number | null) => void)
+      if (event === "error") errorListeners.push(listener as (error: Error) => void)
+      return this
+    },
+    close(code: number) {
+      closeListeners.forEach((listener) => listener(code))
+    },
+    emitError(error: Error) {
+      errorListeners.forEach((listener) => listener(error))
+    },
+  }
 }
 
 describe("OpenCodeServerManager", () => {
@@ -170,6 +200,46 @@ describe("OpenCodeServerManager", () => {
       kind: "assistant_text",
       text: "final text without message.updated",
     })
+
+    manager.stopAll()
+  })
+
+  test("flushes idle text even when the role update is missing", async () => {
+    const sse = createSseHarness()
+    const manager = new OpenCodeServerManager({
+      baseUrl: "http://127.0.0.1:1234",
+      fetch: (async (url) => {
+        if (String(url).endsWith("/global/event")) return sse.response
+        if (String(url).includes("/session?")) return Response.json({ id: "session-1" })
+        if (String(url).endsWith("/session/session-1/prompt_async")) return Response.json({})
+        return new Response("not found", { status: 404 })
+      }) as typeof fetch,
+    })
+
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+    const turn = await manager.startTurn({ chatId: "chat-1", content: "hello" })
+    const eventsPromise = collectStream(turn.stream)
+
+    sse.send({
+      type: "message.part.delta",
+      properties: {
+        sessionID: "session-1",
+        messageID: "message-1",
+        partID: "part-1",
+        field: "text",
+        delta: "assistant text before role update",
+      },
+    })
+    sse.send({
+      type: "session.idle",
+      properties: {
+        sessionID: "session-1",
+      },
+    })
+
+    const events = await eventsPromise
+    const assistant = events.find((event) => event.type === "transcript" && event.entry.kind === "assistant_text")
+    expect(assistant?.entry.text).toBe("assistant text before role update")
 
     manager.stopAll()
   })
@@ -334,6 +404,43 @@ describe("OpenCodeServerManager", () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     expect(requests.some((request) => request.url.endsWith("/session/session-1/abort"))).toBe(true)
+  })
+
+  test("starts a new server after the OpenCode server process exits", async () => {
+    const sse = createSseHarness()
+    const processes: ReturnType<typeof createFakeProcess>[] = []
+    let sessionSequence = 0
+    const manager = new OpenCodeServerManager({
+      spawnProcess: (cwd) => {
+        const process = createFakeProcess()
+        processes.push(process)
+        queueMicrotask(() => {
+          process.stdout.write(`opencode server listening on http://127.0.0.1:${processes.length}\n`)
+        })
+        return process
+      },
+      fetch: (async (url) => {
+        if (String(url).endsWith("/global/event")) return sse.response
+        if (String(url).includes("/session?")) return Response.json({ id: `session-${++sessionSequence}` })
+        if (String(url).endsWith("/prompt_async")) return Response.json({})
+        return new Response("not found", { status: 404 })
+      }) as typeof fetch,
+    })
+
+    await manager.startSession({ chatId: "chat-1", cwd: "/tmp/project", sessionToken: null })
+    const turn = await manager.startTurn({ chatId: "chat-1", content: "hello" })
+    const eventsPromise = collectStream(turn.stream)
+
+    processes[0]?.close(1)
+
+    const events = await eventsPromise
+    const result = events.find((event) => event.type === "transcript" && event.entry.kind === "result")
+    expect(result?.entry.isError).toBe(true)
+
+    await manager.startSession({ chatId: "chat-2", cwd: "/tmp/project", sessionToken: null })
+    expect(processes).toHaveLength(2)
+
+    manager.stopAll()
   })
 
   test("maps reasoning and tool part updates without persisting raw thoughts", async () => {

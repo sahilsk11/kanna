@@ -278,7 +278,7 @@ export class OpenCodeServerManager {
   private readonly fetchImpl: FetchImpl
   private readonly spawnProcess: SpawnOpenCodeServer
   private readonly configuredBaseUrl: string | null
-  private server: ServerState | null = null
+  private readonly servers = new Map<string, ServerState>()
   private stderrLines: string[] = []
 
   constructor(args: {
@@ -393,18 +393,10 @@ export class OpenCodeServerManager {
     for (const chatId of [...this.sessions.keys()]) {
       this.stopSession(chatId)
     }
-    const server = this.server
-    if (!server) return
-    server.stopped = true
-    server.abortController.abort()
-    if (server.child) {
-      try {
-        server.child.kill("SIGKILL")
-      } catch {
-        // Ignore kill failures.
-      }
+    for (const server of new Set(this.servers.values())) {
+      this.stopServer(server, true)
     }
-    this.server = null
+    this.servers.clear()
   }
 
   private requireSession(chatId: string) {
@@ -416,11 +408,13 @@ export class OpenCodeServerManager {
   }
 
   private async ensureServer(cwd: string): Promise<ServerState> {
-    if (this.server && !this.server.stopped) return this.server
+    const key = this.serverKey(cwd)
+    const existing = this.servers.get(key)
+    if (existing && !existing.stopped) return existing
 
     if (this.configuredBaseUrl) {
       const server = this.createServerState(cwd, this.configuredBaseUrl, null)
-      this.server = server
+      this.servers.set(key, server)
       this.startSseLoop(server)
       await server.ready
       return server
@@ -429,16 +423,37 @@ export class OpenCodeServerManager {
     const child = this.spawnProcess(cwd)
     const baseUrl = await this.waitForServerUrl(child)
     const server = this.createServerState(cwd, baseUrl, child)
-    this.server = server
-    child.on("error", (error) => this.failAll(error.message))
+    this.servers.set(key, server)
+    child.on("error", (error) => this.failServer(server, error.message))
     child.on("close", (code) => {
       if (server.stopped) return
       const message = this.stderrLines.at(-1) || `OpenCode server exited with code ${code ?? 1}`
-      this.failAll(message)
+      this.failServer(server, message)
     })
     this.startSseLoop(server)
     await server.ready
     return server
+  }
+
+  private serverKey(cwd: string) {
+    return this.configuredBaseUrl ? "__configured__" : cwd
+  }
+
+  private stopServer(server: ServerState, killChild: boolean) {
+    if (server.stopped) return
+    server.stopped = true
+    server.abortController.abort()
+    if (killChild && server.child) {
+      try {
+        server.child.kill("SIGKILL")
+      } catch {
+        // Ignore kill failures.
+      }
+    }
+    const key = this.serverKey(server.cwd)
+    if (this.servers.get(key) === server) {
+      this.servers.delete(key)
+    }
   }
 
   private createServerState(cwd: string, baseUrl: string, child: OpenCodeServerProcess | null): ServerState {
@@ -465,6 +480,11 @@ export class OpenCodeServerManager {
         if (settled) return
         settled = true
         clearTimeout(timeout)
+        try {
+          child.kill("SIGKILL")
+        } catch {
+          // Ignore kill failures while reporting startup timeout.
+        }
         reject(new Error("Timed out waiting for OpenCode server to start"))
       }, 10_000)
       const stdout = createInterface({ input: child.stdout })
@@ -614,7 +634,7 @@ export class OpenCodeServerManager {
         }
         return
       case "session.idle":
-        this.completeTurn(context, false, "")
+        this.completeTurn(context, false, "", undefined, true)
         return
       case "session.error":
         this.completeTurn(context, true, event.message)
@@ -659,7 +679,13 @@ export class OpenCodeServerManager {
     }
   }
 
-  private completeTurn(context: SessionContext, isError: boolean, message: string, completedMessageIds?: string[]) {
+  private completeTurn(
+    context: SessionContext,
+    isError: boolean,
+    message: string,
+    completedMessageIds?: string[],
+    includeUnknownRoleText = false
+  ) {
     const pendingTurn = context.pendingTurn
     if (!pendingTurn || pendingTurn.resolved) return
     pendingTurn.resolved = true
@@ -667,6 +693,7 @@ export class OpenCodeServerManager {
     const assistantMessageIds = completedMessageIds
       ?? [...pendingTurn.textByMessageId.keys()].filter((messageId) => (
         pendingTurn.roleByMessageId.get(messageId) === "assistant"
+        || (includeUnknownRoleText && !pendingTurn.roleByMessageId.has(messageId))
       ))
 
     for (const messageId of assistantMessageIds) {
@@ -723,8 +750,10 @@ export class OpenCodeServerManager {
     })
   }
 
-  private failAll(message: string) {
+  private failServer(server: ServerState, message: string) {
+    this.stopServer(server, false)
     for (const context of this.sessions.values()) {
+      if (this.serverKey(context.cwd) !== this.serverKey(server.cwd)) continue
       this.completeTurn(context, true, message)
     }
   }
