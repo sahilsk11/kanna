@@ -30,29 +30,43 @@ describe("shouldRestartCliProcess", () => {
 })
 
 describe("createDeferredRestartController", () => {
-  test("restarts immediately when the server is idle", () => {
+  test("restarts after the idle grace period when the server is idle", () => {
     const messages: string[] = []
     let restarts = 0
+    const timeoutCallback: { current: (() => void) | null } = { current: null }
     const controller = createDeferredRestartController({
       isIdle: () => true,
       restart: () => {
         restarts++
       },
       log: (message) => messages.push(message),
+      idleGraceMs: 120_000,
+      setTimeoutFn: ((callback: () => void, delay?: number) => {
+        expect(delay).toBe(120_000)
+        timeoutCallback.current = callback
+        return 1
+      }) as typeof setTimeout,
     })
 
     controller.request("reload requested")
 
+    expect(restarts).toBe(0)
+    expect(controller.pending).toBe(true)
+    expect(messages).toContain("[kanna] reload requested, deferring restart until active sessions are idle")
+
+    timeoutCallback.current?.()
+
     expect(restarts).toBe(1)
     expect(controller.pending).toBe(false)
-    expect(messages).toContain("[kanna] reload requested, restarting now")
+    expect(messages).toContain("[kanna] deferred restart idle grace period elapsed, restarting now")
   })
 
-  test("defers restart until the server becomes idle", () => {
+  test("defers restart until the server remains idle for the grace period", () => {
     const messages: string[] = []
     let restarts = 0
     let idle = false
     const intervalCallback: { current: (() => void) | null } = { current: null }
+    const timeoutCallback: { current: (() => void) | null } = { current: null }
     let intervalCleared = false
 
     const controller = createDeferredRestartController({
@@ -68,6 +82,10 @@ describe("createDeferredRestartController", () => {
       clearIntervalFn: (() => {
         intervalCleared = true
       }) as typeof clearInterval,
+      setTimeoutFn: ((callback: () => void) => {
+        timeoutCallback.current = callback
+        return 2
+      }) as typeof setTimeout,
     })
 
     controller.request("reload requested")
@@ -83,9 +101,65 @@ describe("createDeferredRestartController", () => {
     idle = true
     intervalCallback.current?.()
 
+    expect(restarts).toBe(0)
+    expect(controller.pending).toBe(true)
+    expect(timeoutCallback.current).not.toBeNull()
+
+    timeoutCallback.current?.()
+
     expect(restarts).toBe(1)
     expect(controller.pending).toBe(false)
     expect(intervalCleared).toBe(true)
-    expect(messages).toContain("[kanna] deferred restart conditions satisfied, restarting now")
+    expect(messages).toContain("[kanna] deferred restart idle grace period elapsed, restarting now")
+  })
+
+  test("cancels the idle grace period when activity resumes", () => {
+    let restarts = 0
+    let idle = true
+    const intervalCallback: { current: (() => void) | null } = { current: null }
+    const timeoutCallbacks: Array<() => void> = []
+    let timeoutsCleared = 0
+
+    const controller = createDeferredRestartController({
+      isIdle: () => idle,
+      restart: () => {
+        restarts++
+      },
+      log: () => {},
+      idleGraceMs: 120_000,
+      setIntervalFn: ((callback: () => void) => {
+        intervalCallback.current = callback
+        return 1
+      }) as typeof setInterval,
+      setTimeoutFn: ((callback: () => void) => {
+        timeoutCallbacks.push(callback)
+        return timeoutCallbacks.length
+      }) as typeof setTimeout,
+      clearTimeoutFn: (() => {
+        timeoutsCleared++
+      }) as typeof clearTimeout,
+    })
+
+    controller.request("reload requested")
+
+    expect(timeoutCallbacks).toHaveLength(1)
+
+    idle = false
+    intervalCallback.current?.()
+
+    expect(timeoutsCleared).toBe(1)
+
+    timeoutCallbacks[0]?.()
+    expect(restarts).toBe(0)
+    expect(controller.pending).toBe(true)
+
+    idle = true
+    intervalCallback.current?.()
+
+    expect(timeoutCallbacks).toHaveLength(2)
+    timeoutCallbacks[1]?.()
+
+    expect(restarts).toBe(1)
+    expect(controller.pending).toBe(false)
   })
 })
