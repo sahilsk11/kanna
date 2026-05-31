@@ -2,9 +2,11 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { renderToStaticMarkup } from "react-dom/server"
 import { RefreshCw } from "lucide-react"
 import {
+  ArchivedSessionsSection,
   ChangelogSection,
   fetchGithubReleases,
   formatPublishedDate,
+  getArchivedSessionRows,
   getCachedChangelog,
   getKeybindingsSubtitle,
   loadChangelog,
@@ -15,7 +17,7 @@ import {
   SkillsSection,
 } from "./SettingsPage"
 import { SettingsHeaderButton } from "../components/ui/settings-header-button"
-import type { UpdateSnapshot } from "../../shared/types"
+import type { SidebarProjectGroup, UpdateSnapshot } from "../../shared/types"
 
 const SAMPLE_RELEASES = [
   {
@@ -136,6 +138,7 @@ describe("resolveSettingsSectionId", () => {
     expect(resolveSettingsSectionId("changelog")).toBe("changelog")
     expect(resolveSettingsSectionId("keybindings")).toBe("keybindings")
     expect(resolveSettingsSectionId("skills")).toBe("skills")
+    expect(resolveSettingsSectionId("archived-sessions")).toBe("archived-sessions")
   })
 
   test("rejects unknown settings sections", () => {
@@ -163,6 +166,67 @@ describe("SkillsSection", () => {
     expect(html).toContain("Installed")
     expect(html).toContain("Discover")
     expect(html).toContain("Search skills")
+  })
+})
+
+describe("ArchivedSessionsSection", () => {
+  const projectGroups: SidebarProjectGroup[] = [{
+    groupKey: "task-1",
+    kind: "task",
+    taskId: "task-1",
+    title: "Task One",
+    realTitle: "Task One",
+    localPath: "/tmp/project",
+    chats: [],
+    previewChats: [],
+    olderChats: [],
+    archivedChats: [{
+      _id: "chat-1",
+      _creationTime: 1_000,
+      chatId: "chat-1",
+      title: "Archived chat",
+      status: "idle",
+      unread: false,
+      localPath: "/tmp/project",
+      provider: "codex",
+      lastMessageAt: 60_000,
+      hasAutomation: false,
+    }],
+    defaultCollapsed: false,
+  }]
+
+  test("flattens archived sessions across sidebar groups", () => {
+    expect(getArchivedSessionRows(projectGroups).map(({ chat, group }) => [chat.chatId, group.groupKey])).toEqual([
+      ["chat-1", "task-1"],
+    ])
+  })
+
+  test("renders archived session metadata and unarchive action", () => {
+    const html = renderToStaticMarkup(
+      <ArchivedSessionsSection
+        projectGroups={projectGroups}
+        nowMs={120_000}
+        onUnarchiveChat={() => {}}
+      />
+    )
+
+    expect(html).toContain("Archived chat")
+    expect(html).toContain("Task One")
+    expect(html).toContain("codex")
+    expect(html).toContain("/tmp/project")
+    expect(html).toContain("Unarchive")
+  })
+
+  test("renders an empty state when no sessions are archived", () => {
+    const html = renderToStaticMarkup(
+      <ArchivedSessionsSection
+        projectGroups={[{ ...projectGroups[0], archivedChats: [] }]}
+        nowMs={120_000}
+        onUnarchiveChat={() => {}}
+      />
+    )
+
+    expect(html).toContain("No archived sessions.")
   })
 })
 
