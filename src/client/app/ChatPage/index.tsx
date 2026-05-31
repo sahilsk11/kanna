@@ -991,6 +991,7 @@ export function ChatPage() {
         projectId={projectId}
         activeProvider={state.runtime?.provider ?? null}
         availableProviders={state.availableProviders}
+        socket={state.socket}
         contextWindowSnapshot={contextWindowSnapshot}
         onSubmit={handleChatSubmit}
         onCancel={handleCancel}

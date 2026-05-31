@@ -67,6 +67,15 @@ export interface InstalledSkillsSnapshot {
   skills: InstalledSkillSummary[]
 }
 
+export interface SavedSkillSummary {
+  name: string
+  description: string
+}
+
+export interface SavedSkillsSnapshot {
+  skills: SavedSkillSummary[]
+}
+
 export interface ChatAttachment {
   id: string
   kind: AttachmentKind

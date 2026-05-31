@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises"
+import { readdir, readFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { ServerWebSocket } from "bun"
@@ -28,6 +28,8 @@ import type {
   InstalledSkillsSnapshot,
   LlmProviderSnapshot,
   LlmProviderValidationResult,
+  SavedSkillsSnapshot,
+  SavedSkillSummary,
   SkillInstallResult,
   SkillSearchSnapshot,
   SkillUninstallResult,
@@ -188,6 +190,70 @@ export function getGlobalSkillLockPath() {
     return path.join(xdgStateHome, "skills", ".skill-lock.json")
   }
   return path.join(os.homedir(), ".agents", ".skill-lock.json")
+}
+
+export function getSavedSkillDirs(homeDir = os.homedir()) {
+  return [
+    path.join(homeDir, ".agents", "skills"),
+    path.join(homeDir, "projects", "sas", "skills"),
+  ]
+}
+
+function parseSkillDescription(markdown: string) {
+  const normalized = markdown.replace(/\r\n/g, "\n")
+  if (!normalized.startsWith("---")) return ""
+  const end = normalized.indexOf("\n---", 3)
+  if (end === -1) return ""
+
+  for (const line of normalized.slice(3, end).split("\n")) {
+    const match = line.match(/^description:\s*(.*)$/)
+    if (!match) continue
+    const description = match[1].trim().replace(/^["']|["']$/g, "")
+    return description === "|" || description === ">" ? "" : description
+  }
+  return ""
+}
+
+async function readSavedSkillSummary(skillDir: string): Promise<SavedSkillSummary> {
+  const name = path.basename(skillDir)
+  try {
+    const markdown = await readFile(path.join(skillDir, "SKILL.md"), "utf8")
+    return {
+      name,
+      description: parseSkillDescription(markdown),
+    }
+  } catch {
+    return {
+      name,
+      description: "",
+    }
+  }
+}
+
+async function listSkillDirectorySummaries(skillsDir: string) {
+  try {
+    const entries = await readdir(skillsDir, { withFileTypes: true })
+    const skillDirs = entries
+      .filter((entry) => (entry.isDirectory() || entry.isSymbolicLink()) && !entry.name.startsWith("."))
+      .map((entry) => path.join(skillsDir, entry.name))
+    return await Promise.all(skillDirs.map((skillDir) => readSavedSkillSummary(skillDir)))
+  } catch {
+    return []
+  }
+}
+
+export async function listSavedSkills(skillsDirs = getSavedSkillDirs()): Promise<SavedSkillsSnapshot> {
+  const groups = await Promise.all(skillsDirs.map((dir) => listSkillDirectorySummaries(dir)))
+  const byName = new Map<string, SavedSkillSummary>()
+  for (const skill of groups.flat()) {
+    const existing = byName.get(skill.name)
+    if (!existing || (!existing.description && skill.description)) {
+      byName.set(skill.name, skill)
+    }
+  }
+  return {
+    skills: [...byName.values()].sort((a, b) => a.name.localeCompare(b.name)),
+  }
 }
 
 function asString(value: unknown) {
@@ -1217,6 +1283,11 @@ export function createWsRouter({
         }
         case "skills.listInstalled": {
           const result = await listInstalledSkills()
+          send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
+          return
+        }
+        case "skills.listSaved": {
+          const result = await listSavedSkills()
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
           return
         }
