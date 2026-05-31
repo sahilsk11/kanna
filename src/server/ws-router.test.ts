@@ -194,10 +194,29 @@ describe("skills helpers", () => {
 
       const snapshot = await listSavedSkills([globalSkills, sasSkills])
 
-      expect(snapshot.checkedDirs).toEqual([globalSkills, sasSkills])
       expect(snapshot.skills).toEqual([
         { name: "fresh", description: "Start from a clean main checkout." },
         { name: "wt", description: "" },
+      ])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("falls back cleanly for saved skill description frontmatter edge cases", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "kanna-saved-skills-"))
+    try {
+      const skillsDir = path.join(dir, "skills")
+      await mkdir(path.join(skillsDir, "block"), { recursive: true })
+      await mkdir(path.join(skillsDir, "crlf"), { recursive: true })
+      await writeFile(path.join(skillsDir, "block", "SKILL.md"), "---\ndescription: |\n  Longer description.\n---\n", "utf8")
+      await writeFile(path.join(skillsDir, "crlf", "SKILL.md"), "---\r\ndescription: Handles CRLF.\r\n---\r\n", "utf8")
+
+      const snapshot = await listSavedSkills([skillsDir])
+
+      expect(snapshot.skills).toEqual([
+        { name: "block", description: "" },
+        { name: "crlf", description: "Handles CRLF." },
       ])
     } finally {
       await rm(dir, { recursive: true, force: true })

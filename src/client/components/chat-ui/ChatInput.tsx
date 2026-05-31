@@ -33,6 +33,11 @@ const MAX_FILES_PER_DROP = 50
 const MAX_CONCURRENT_UPLOADS = 3
 const MAX_SLASH_COMMAND_SUGGESTIONS = 8
 
+interface TextSelectionRange {
+  start: number
+  end: number
+}
+
 const CLIPBOARD_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   "image/gif": "gif",
   "image/jpeg": "jpg",
@@ -253,6 +258,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [savedSkillsLoaded, setSavedSkillsLoaded] = useState(false)
   const [slashSelectionIndex, setSlashSelectionIndex] = useState(0)
   const [slashMenuDismissedFor, setSlashMenuDismissedFor] = useState<string | null>(null)
+  const [textSelectionRange, setTextSelectionRange] = useState<TextSelectionRange | null>(null)
   const uploadQueueRef = useRef<File[]>([])
   const activeUploadsRef = useRef(0)
   const attachmentsRef = useRef<ComposerAttachment[]>([])
@@ -286,9 +292,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     return left.kind === "image" ? -1 : 1
   })
   const selectedAttachment = attachments.find((attachment) => attachment.id === selectedAttachmentId) ?? null
-  const slashQuery = typeof document === "undefined"
-    ? null
-    : getSlashCommandQuery(value, textareaRef.current?.selectionStart ?? value.length, textareaRef.current?.selectionEnd ?? value.length)
+  const slashSelectionRange = textSelectionRange ?? { start: value.length, end: value.length }
+  const slashQuery = getSlashCommandQuery(value, slashSelectionRange.start, slashSelectionRange.end)
   const slashSuggestions = useMemo(() => {
     if (slashQuery === null || slashMenuDismissedFor === slashQuery) return []
     const normalizedQuery = slashQuery.toLowerCase()
@@ -342,6 +347,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       }
     }
   }, [inputElementRef])
+
+  function captureTextSelection(textarea: HTMLTextAreaElement) {
+    setTextSelectionRange({
+      start: textarea.selectionStart,
+      end: textarea.selectionEnd,
+    })
+  }
 
   useLayoutEffect(() => {
     autoResize()
@@ -636,11 +648,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   function acceptSlashSuggestion(skillName: string) {
     const textarea = textareaRef.current
-    const selectionStart = textarea?.selectionStart ?? value.length
+    const selectionStart = textSelectionRange?.start ?? textarea?.selectionStart ?? value.length
     const completed = applySlashCommandCompletion(value, skillName, selectionStart)
     setValue(completed.value)
     if (chatId) setDraft(chatId, completed.value)
     setSlashMenuDismissedFor(null)
+    setTextSelectionRange({ start: completed.caret, end: completed.caret })
     requestAnimationFrame(() => {
       textareaRef.current?.focus()
       if (textareaRef.current) {
@@ -869,8 +882,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 setValue(event.target.value)
                 if (chatId) setDraft(chatId, event.target.value)
                 setSlashMenuDismissedFor(null)
+                captureTextSelection(event.target)
                 autoResize()
               }}
+              onSelect={(event) => captureTextSelection(event.currentTarget)}
               onPaste={handlePaste}
               onKeyDown={handleKeyDown}
               disabled={disabled}

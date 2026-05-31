@@ -74,7 +74,6 @@ export interface SavedSkillSummary {
 
 export interface SavedSkillsSnapshot {
   skills: SavedSkillSummary[]
-  checkedDirs: string[]
 }
 
 export interface ChatAttachment {

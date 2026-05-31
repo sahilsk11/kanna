@@ -200,19 +200,21 @@ export function getSavedSkillDirs(homeDir = os.homedir()) {
 }
 
 function parseSkillDescription(markdown: string) {
-  if (!markdown.startsWith("---")) return ""
-  const end = markdown.indexOf("\n---", 3)
+  const normalized = markdown.replace(/\r\n/g, "\n")
+  if (!normalized.startsWith("---")) return ""
+  const end = normalized.indexOf("\n---", 3)
   if (end === -1) return ""
 
-  for (const line of markdown.slice(3, end).split(/\r?\n/)) {
+  for (const line of normalized.slice(3, end).split("\n")) {
     const match = line.match(/^description:\s*(.*)$/)
     if (!match) continue
-    return match[1].trim().replace(/^["']|["']$/g, "")
+    const description = match[1].trim().replace(/^["']|["']$/g, "")
+    return description === "|" || description === ">" ? "" : description
   }
   return ""
 }
 
-async function readSavedSkillSummary(skillDir: string): Promise<SavedSkillSummary | null> {
+async function readSavedSkillSummary(skillDir: string): Promise<SavedSkillSummary> {
   const name = path.basename(skillDir)
   try {
     const markdown = await readFile(path.join(skillDir, "SKILL.md"), "utf8")
@@ -234,8 +236,7 @@ async function listSkillDirectorySummaries(skillsDir: string) {
     const skillDirs = entries
       .filter((entry) => (entry.isDirectory() || entry.isSymbolicLink()) && !entry.name.startsWith("."))
       .map((entry) => path.join(skillsDir, entry.name))
-    const skills = await Promise.all(skillDirs.map((skillDir) => readSavedSkillSummary(skillDir)))
-    return skills.filter((skill): skill is SavedSkillSummary => skill !== null)
+    return await Promise.all(skillDirs.map((skillDir) => readSavedSkillSummary(skillDir)))
   } catch {
     return []
   }
@@ -251,7 +252,6 @@ export async function listSavedSkills(skillsDirs = getSavedSkillDirs()): Promise
     }
   }
   return {
-    checkedDirs: skillsDirs,
     skills: [...byName.values()].sort((a, b) => a.name.localeCompare(b.name)),
   }
 }
