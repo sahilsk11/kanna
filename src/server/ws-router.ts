@@ -22,6 +22,7 @@ import { writeStandaloneTranscriptExport } from "./standalone-export"
 import { TerminalManager } from "./terminal-manager"
 import type { UpdateManager } from "./update-manager"
 import { deriveChatSnapshot, deriveLocalProjectsSnapshot, deriveSidebarData } from "./read-models"
+import type { PushNotificationManager } from "./push-notifications"
 import type {
   AppSettingsPatch,
   AppSettingsSnapshot,
@@ -136,6 +137,7 @@ interface CreateWsRouterArgs {
   machineDisplayName: string
   defaultProjectPath?: string
   updateManager: UpdateManager | null
+  pushNotifications?: Pick<PushNotificationManager, "handleSidebarData">
 }
 
 interface SnapshotBroadcastFilter {
@@ -455,6 +457,7 @@ export function createWsRouter({
   machineDisplayName,
   defaultProjectPath = getDefaultProjectPath(),
   updateManager,
+  pushNotifications,
 }: CreateWsRouterArgs) {
   const sockets = new Set<ServerWebSocket<ClientState>>()
   let pendingBroadcastTimer: ReturnType<typeof setTimeout> | null = null
@@ -937,6 +940,7 @@ export function createWsRouter({
     const startedAt = performance.now()
     let socketCount = 0
     const cache: SnapshotComputationCache = {}
+    await pushNotifications?.handleSidebarData(getSidebarSnapshotCacheEntry(cache).data)
     for (const ws of sockets) {
       socketCount += 1
       await pushSnapshots(ws, { skipPrune: true, cache })
@@ -957,6 +961,9 @@ export function createWsRouter({
     const startedAt = performance.now()
     let socketCount = 0
     const cache: SnapshotComputationCache = {}
+    if (filter.includeSidebar) {
+      await pushNotifications?.handleSidebarData(getSidebarSnapshotCacheEntry(cache).data)
+    }
     for (const ws of sockets) {
       socketCount += 1
       await pushSnapshots(ws, { skipPrune: true, filter, cache })
