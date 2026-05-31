@@ -190,6 +190,7 @@ describe("ArchivedSessionsSection", () => {
       localPath: "/tmp/project",
       provider: "codex",
       lastMessageAt: 60_000,
+      archivedAt: 90_000,
       hasAutomation: false,
     }],
     defaultCollapsed: false,
@@ -198,6 +199,40 @@ describe("ArchivedSessionsSection", () => {
   test("flattens archived sessions across sidebar groups", () => {
     expect(getArchivedSessionRows(projectGroups).map(({ chat, group }) => [chat.chatId, group.groupKey])).toEqual([
       ["chat-1", "task-1"],
+    ])
+  })
+
+  test("sorts archived sessions by archived time with latest fallback first", () => {
+    const rows = getArchivedSessionRows([
+      {
+        ...projectGroups[0],
+        archivedChats: [
+          {
+            ...projectGroups[0].archivedChats![0],
+            chatId: "older-archived",
+            archivedAt: 70_000,
+            lastMessageAt: 120_000,
+          },
+          {
+            ...projectGroups[0].archivedChats![0],
+            chatId: "newer-archived",
+            archivedAt: 90_000,
+            lastMessageAt: 10_000,
+          },
+          {
+            ...projectGroups[0].archivedChats![0],
+            chatId: "fallback-latest",
+            archivedAt: undefined,
+            lastMessageAt: 80_000,
+          },
+        ],
+      },
+    ])
+
+    expect(rows.map(({ chat }) => chat.chatId)).toEqual([
+      "newer-archived",
+      "fallback-latest",
+      "older-archived",
     ])
   })
 

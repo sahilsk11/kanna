@@ -255,12 +255,17 @@ interface ArchivedSessionRow {
 }
 
 export function getArchivedSessionRows(projectGroups: SidebarProjectGroup[]): ArchivedSessionRow[] {
-  return projectGroups.flatMap((group) =>
-    (group.archivedChats ?? []).map((chat) => ({
-      chat,
-      group,
-    }))
-  )
+  return projectGroups
+    .flatMap((group) =>
+      (group.archivedChats ?? []).map((chat) => ({
+        chat,
+        group,
+      }))
+    )
+    .sort((left, right) =>
+      (right.chat.archivedAt ?? getSidebarChatTimestamp(right.chat))
+      - (left.chat.archivedAt ?? getSidebarChatTimestamp(left.chat))
+    )
 }
 
 export function ArchivedSessionsSection({
@@ -285,7 +290,7 @@ export function ArchivedSessionsSection({
   return (
     <div className="border-b border-border">
       {archivedSessions.map(({ chat, group }, index) => {
-        const timestamp = getSidebarChatTimestamp(chat)
+        const timestamp = chat.archivedAt ?? getSidebarChatTimestamp(chat)
         const ageLabel = formatSidebarAgeLabel(timestamp, nowMs)
         const relativeAge = ageLabel === "now" ? "now" : ageLabel ? `${ageLabel} ago` : null
         const archivedDate = new Intl.DateTimeFormat(undefined, {
