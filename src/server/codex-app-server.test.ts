@@ -204,13 +204,66 @@ describe("CodexAppServerManager", () => {
       | { method: "thread/start"; params: { serviceTier?: string } }
       | undefined
     const turnStart = process.messages.find((message: any) => message.method === "turn/start") as
-      | { method: "turn/start"; params: { effort?: string; serviceTier?: string; collaborationMode?: { settings?: { reasoning_effort?: string | null } } } }
+      | { method: "turn/start"; params: { effort?: string; serviceTier?: string; collaborationMode?: { mode?: string; settings?: { reasoning_effort?: string | null } } } }
       | undefined
 
     expect(threadStart?.params.serviceTier).toBe("fast")
     expect(turnStart?.params.effort).toBe("xhigh")
     expect(turnStart?.params.serviceTier).toBe("fast")
+    expect(turnStart?.params.collaborationMode?.mode).toBe("default")
     expect(turnStart?.params.collaborationMode?.settings?.reasoning_effort).toBeNull()
+  })
+
+  test("uses plan collaboration mode for Ask Question prompts without marking the turn as plan mode", async () => {
+    const process = new FakeCodexProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeServerMessage({ id: message.id, result: { userAgent: "codex-test" } })
+      } else if (message.method === "thread/start") {
+        child.writeServerMessage({
+          id: message.id,
+          result: { thread: { id: "thread-ask" }, model: "gpt-5.4", reasoningEffort: "high" },
+        })
+      } else if (message.method === "turn/start") {
+        child.writeServerMessage({
+          id: message.id,
+          result: { turn: { id: "turn-ask", status: "completed", error: null } },
+        })
+        child.writeServerMessage({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-ask",
+            turn: { id: "turn-ask", status: "completed", error: null },
+          },
+        })
+      }
+    })
+
+    const manager = new CodexAppServerManager({
+      spawnProcess: () => process as never,
+    })
+
+    await manager.startSession({
+      chatId: "chat-1",
+      cwd: "/tmp/project",
+      model: "gpt-5.4",
+      sessionToken: null,
+    })
+
+    const turn = await manager.startTurn({
+      chatId: "chat-1",
+      model: "gpt-5.4",
+      content: "ask me another question",
+      planMode: false,
+      onToolRequest: async () => ({}),
+    })
+
+    const events = await collectStream(turn.stream)
+    const turnStart = process.messages.find((message: any) => message.method === "turn/start") as
+      | { method: "turn/start"; params: { collaborationMode?: { mode?: string } } }
+      | undefined
+
+    expect(turnStart?.params.collaborationMode?.mode).toBe("plan")
+    expect(events.some((event) => event.type === "transcript" && event.entry.kind === "tool_call" && event.entry.tool.toolKind === "exit_plan_mode")).toBe(false)
   })
 
   test("maps thread token usage updates into context window transcript entries", async () => {
@@ -1512,6 +1565,99 @@ describe("CodexAppServerManager", () => {
         },
       }),
     })
+
+    const events = await collectStream(turn.stream)
+    const askEntry = events.find((event) => event.type === "transcript" && event.entry.kind === "tool_call")
+    expect(askEntry?.entry.tool.toolKind).toBe("ask_user_question")
+
+    const response = process.messages.find((message: any) => message.id === "req-1")
+    expect(response).toEqual({
+      id: "req-1",
+      result: {
+        answers: {
+          runtime: {
+            answers: ["bun"],
+          },
+        },
+      },
+    })
+  })
+
+  test("returns the turn stream while requestUserInput is pending before turn/start resolves", async () => {
+    const process = new FakeCodexProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeServerMessage({ id: message.id, result: { userAgent: "codex-test" } })
+      } else if (message.method === "thread/start") {
+        child.writeServerMessage({
+          id: message.id,
+          result: { thread: { id: "thread-1" }, model: "gpt-5.4", reasoningEffort: "high" },
+        })
+      } else if (message.method === "turn/start") {
+        child.writeServerMessage({
+          id: "req-1",
+          method: "item/tool/requestUserInput",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            itemId: "ask-1",
+            questions: [
+              {
+                id: "runtime",
+                header: "Runtime",
+                question: "Which runtime?",
+                isOther: false,
+                isSecret: false,
+                options: null,
+              },
+            ],
+          },
+        })
+      } else if (message.id === "req-1") {
+        const turnStartRequest = process.messages.find((candidate: any) => candidate.method === "turn/start") as
+          | { id: string }
+          | undefined
+        child.writeServerMessage({
+          id: turnStartRequest?.id,
+          result: { turn: { id: "turn-1", status: "inProgress", error: null } },
+        })
+        child.writeServerMessage({
+          method: "turn/completed",
+          params: {
+            threadId: "thread-1",
+            turn: { id: "turn-1", status: "completed", error: null },
+          },
+        })
+      }
+    })
+
+    const manager = new CodexAppServerManager({
+      spawnProcess: () => process as never,
+    })
+
+    await manager.startSession({
+      chatId: "chat-1",
+      cwd: "/tmp/project",
+      model: "gpt-5.4",
+      sessionToken: null,
+    })
+
+    const turn = await Promise.race([
+      manager.startTurn({
+        chatId: "chat-1",
+        model: "gpt-5.4",
+        content: "ask me",
+        planMode: false,
+        onToolRequest: async () => ({
+          answers: {
+            runtime: "bun",
+          },
+        }),
+      }),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 100)),
+    ])
+
+    expect(turn).not.toBe("timeout")
+    if (turn === "timeout") throw new Error("turn stream did not start while requestUserInput was pending")
 
     const events = await collectStream(turn.stream)
     const askEntry = events.find((event) => event.type === "transcript" && event.entry.kind === "tool_call")
