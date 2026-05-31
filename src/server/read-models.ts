@@ -113,6 +113,7 @@ export function deriveSidebarData(
           localPath: project?.localPath ?? "",
           provider: chat.provider,
           lastMessageAt: chat.lastMessageAt,
+          archivedAt: chat.archivedAt,
           hasAutomation: false,
           canFork: canForkChat(chat, activeStatuses, drainingChatIds) || undefined,
         }

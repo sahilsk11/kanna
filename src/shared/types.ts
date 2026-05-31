@@ -445,6 +445,7 @@ export interface SidebarChatRow {
   localPath: string
   provider: AgentProvider | null
   lastMessageAt?: number
+  archivedAt?: number
   hasAutomation: boolean
   canFork?: boolean
 }
