@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { getAppAuthStateFromStatus, shouldPlayChatNotificationSound, shouldRedirectToChangelog, shouldRetryAuthStatusRequest } from "./App"
+import { getAppAuthStateFromStatus, shouldOpenMobileNavbarOnLoad, shouldPlayChatNotificationSound, shouldRedirectToChangelog, shouldRetryAuthStatusRequest } from "./App"
 import { getChatNotificationSnapshot, getChatSoundBurstCount, getNotificationTitleCount } from "./chatNotifications"
 import { DEFAULT_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH, MIN_SIDEBAR_WIDTH, clampSidebarWidth } from "./KannaSidebar"
 import { isBrowserUnfocused, shouldPlayChatSound } from "../lib/chatSounds"
@@ -25,6 +25,19 @@ describe("shouldRedirectToChangelog", () => {
     expect(shouldRedirectToChangelog("/settings/general", "0.12.0", "0.11.0")).toBe(false)
     expect(shouldRedirectToChangelog("/chat/1", "0.12.0", "0.11.0")).toBe(false)
     expect(shouldRedirectToChangelog("/", "0.12.0", "0.12.0")).toBe(false)
+  })
+})
+
+describe("shouldOpenMobileNavbarOnLoad", () => {
+  test("opens on mobile routes that do not identify a chat session", () => {
+    expect(shouldOpenMobileNavbarOnLoad("/", 390)).toBe(true)
+    expect(shouldOpenMobileNavbarOnLoad("/settings/general", 390)).toBe(true)
+  })
+
+  test("stays closed for chat deep links and desktop widths", () => {
+    expect(shouldOpenMobileNavbarOnLoad("/chat/chat-1", 390)).toBe(false)
+    expect(shouldOpenMobileNavbarOnLoad("/", 768)).toBe(false)
+    expect(shouldOpenMobileNavbarOnLoad("/", 1024)).toBe(false)
   })
 })
 

@@ -21,6 +21,7 @@ import type { AppSettingsSnapshot } from "../../shared/types"
 
 const VERSION_SEEN_STORAGE_KEY = "kanna:last-seen-version"
 const AUTH_STATUS_RETRY_DELAY_MS = 500
+const MOBILE_NAVBAR_AUTO_OPEN_BREAKPOINT_PX = 768
 
 interface AuthStatusResponse {
   enabled: boolean
@@ -187,6 +188,14 @@ export function shouldRedirectToChangelog(pathname: string, currentVersion: stri
   return pathname === "/" && Boolean(currentVersion) && seenVersion !== currentVersion
 }
 
+export function shouldOpenMobileNavbarOnLoad(pathname: string, viewportWidth: number) {
+  if (!Number.isFinite(viewportWidth) || viewportWidth >= MOBILE_NAVBAR_AUTO_OPEN_BREAKPOINT_PX) {
+    return false
+  }
+
+  return !/^\/chat\/[^/]+/u.test(pathname)
+}
+
 export function shouldPlayChatNotificationSound(
   appSettings: AppSettingsSnapshot | null,
   preference: ChatSoundPreference,
@@ -205,6 +214,7 @@ function KannaLayout() {
   const showMobileOpenButton = location.pathname === "/"
   const currentVersion = SDK_CLIENT_APP.split("/")[1] ?? "unknown"
   const previousSidebarDataRef = useRef<ReturnType<typeof useKannaState>["sidebarData"] | null>(null)
+  const handledInitialMobileNavbarRef = useRef(false)
   const handleSidebarCreateChat = useCallback((projectId: string) => {
     void state.handleCreateChat(projectId)
   }, [state.handleCreateChat])
@@ -331,6 +341,13 @@ function KannaLayout() {
     if (!shouldRedirect) return
     navigate("/settings/changelog", { replace: true })
   }, [currentVersion, location.pathname, navigate])
+
+  useEffect(() => {
+    if (handledInitialMobileNavbarRef.current) return
+    handledInitialMobileNavbarRef.current = true
+    if (!shouldOpenMobileNavbarOnLoad(location.pathname, window.innerWidth)) return
+    state.openSidebar()
+  }, [location.pathname, state.openSidebar])
 
   useLayoutEffect(() => {
     document.title = APP_NAME
