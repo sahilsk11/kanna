@@ -373,7 +373,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   useEffect(() => {
     if (!socket || savedSkillsLoaded || slashQuery === null) return
     let cancelled = false
-    void socket.command<SavedSkillsSnapshot>({ type: "skills.listSaved" })
+    void socket.command<SavedSkillsSnapshot>({ type: "skills.listSaved", projectId })
       .then((snapshot) => {
         if (cancelled) return
         setSavedSkills(snapshot.skills)
@@ -387,7 +387,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     return () => {
       cancelled = true
     }
-  }, [savedSkillsLoaded, slashQuery, socket])
+  }, [projectId, savedSkillsLoaded, slashQuery, socket])
 
   useEffect(() => {
     setSlashSelectionIndex(0)

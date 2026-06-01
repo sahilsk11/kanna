@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process"
+import { spawn, spawnSync } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import path from "node:path"
 import { createInterface } from "node:readline"
@@ -394,6 +394,22 @@ function hermesProfileForBridge(profile?: string | null): string | null {
   return trimmed
 }
 
+export function resolveHermesBridgeRuntime(args: {
+  env?: NodeJS.ProcessEnv
+  execPath?: string
+  isNodeAvailable?: () => boolean
+} = {}) {
+  const env = args.env ?? process.env
+  const configuredRuntime = env.KANNA_HERMES_ACP_BRIDGE_RUNTIME?.trim()
+  if (configuredRuntime) return configuredRuntime
+
+  const execPath = args.execPath ?? process.execPath
+  if (path.basename(execPath).startsWith("node")) return execPath
+
+  const isNodeAvailable = args.isNodeAvailable ?? (() => !spawnSync("node", ["--version"], { stdio: "ignore" }).error)
+  return isNodeAvailable() ? "node" : execPath
+}
+
 export class HermesAcpManager {
   private readonly sessions = new Map<string, SessionContext>()
   private readonly spawnProcess: SpawnAcp
@@ -410,7 +426,7 @@ export class HermesAcpManager {
       ...args.providerConfig,
     }
     this.spawnProcess = args.spawnProcess ?? ((cwd, options) =>
-      spawn("node", [HERMES_ACP_BRIDGE_PATH], {
+      spawn(resolveHermesBridgeRuntime(), [HERMES_ACP_BRIDGE_PATH], {
         cwd,
         stdio: ["pipe", "pipe", "pipe"],
         env: {

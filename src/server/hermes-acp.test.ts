@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { EventEmitter } from "node:events"
 import { PassThrough } from "node:stream"
-import { HermesAcpManager } from "./hermes-acp"
+import { HermesAcpManager, resolveHermesBridgeRuntime } from "./hermes-acp"
 
 class FakeHermesProcess extends EventEmitter {
   readonly stdin = new PassThrough()
@@ -55,6 +55,24 @@ async function collectStream(stream: AsyncIterable<any>) {
 }
 
 describe("HermesAcpManager", () => {
+  test("resolves the ACP bridge runtime without requiring a hardcoded node binary", () => {
+    expect(resolveHermesBridgeRuntime({
+      env: { KANNA_HERMES_ACP_BRIDGE_RUNTIME: "/custom/node" },
+      execPath: "/usr/local/bin/bun",
+      isNodeAvailable: () => true,
+    })).toBe("/custom/node")
+    expect(resolveHermesBridgeRuntime({
+      env: {},
+      execPath: "/usr/local/bin/bun",
+      isNodeAvailable: () => true,
+    })).toBe("node")
+    expect(resolveHermesBridgeRuntime({
+      env: {},
+      execPath: "/usr/local/bin/bun",
+      isNodeAvailable: () => false,
+    })).toBe("/usr/local/bin/bun")
+  })
+
   test("initializes Hermes ACP and starts a fresh session", async () => {
     const process = new FakeHermesProcess((message, child) => {
       if (message.method === "initialize") {

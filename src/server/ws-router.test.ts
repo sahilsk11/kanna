@@ -11,6 +11,7 @@ import {
   buildInstallSkillCommand,
   buildUninstallSkillCommand,
   createWsRouter,
+  getSavedSkillDirs,
   listInstalledSkills,
   listSavedSkills,
   parseInstalledSkillsLock,
@@ -185,18 +186,23 @@ describe("skills helpers", () => {
     const dir = await mkdtemp(path.join(tmpdir(), "kanna-saved-skills-"))
     try {
       const globalSkills = path.join(dir, ".agents", "skills")
-      const sasSkills = path.join(dir, "projects", "sas", "skills")
+      const projectPath = path.join(dir, "projects", "example")
+      const projectSkills = path.join(projectPath, ".agents", "skills")
+      const extraSkills = path.join(dir, "extra-skills")
       await mkdir(path.join(globalSkills, "wt"), { recursive: true })
       await mkdir(path.join(globalSkills, ".hidden"), { recursive: true })
-      await mkdir(path.join(sasSkills, "fresh"), { recursive: true })
-      await mkdir(path.join(sasSkills, "wt"), { recursive: true })
-      await writeFile(path.join(sasSkills, "fresh", "SKILL.md"), "---\ndescription: Start from a clean main checkout.\n---\n", "utf8")
+      await mkdir(path.join(projectSkills, "fresh"), { recursive: true })
+      await mkdir(path.join(projectSkills, "wt"), { recursive: true })
+      await mkdir(path.join(extraSkills, "review"), { recursive: true })
+      await writeFile(path.join(projectSkills, "fresh", "SKILL.md"), "---\ndescription: Start from a clean main checkout.\n---\n", "utf8")
 
-      const snapshot = await listSavedSkills([globalSkills, sasSkills])
+      const skillDirs = getSavedSkillDirs({ homeDir: dir, projectLocalPath: projectPath, extraDirs: [extraSkills] })
+      const snapshot = await listSavedSkills(skillDirs)
 
-      expect(snapshot.checkedDirs).toEqual([globalSkills, sasSkills])
+      expect(snapshot.checkedDirs).toEqual([globalSkills, projectSkills, extraSkills])
       expect(snapshot.skills).toEqual([
         { name: "fresh", description: "Start from a clean main checkout." },
+        { name: "review", description: "" },
         { name: "wt", description: "" },
       ])
     } finally {

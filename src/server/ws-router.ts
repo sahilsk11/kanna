@@ -192,11 +192,28 @@ export function getGlobalSkillLockPath() {
   return path.join(os.homedir(), ".agents", ".skill-lock.json")
 }
 
-export function getSavedSkillDirs(homeDir = os.homedir()) {
-  return [
+function uniquePaths(paths: string[]) {
+  return [...new Set(paths)]
+}
+
+function parsePathList(value?: string) {
+  return (value ?? "")
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+}
+
+export function getSavedSkillDirs(args: {
+  homeDir?: string
+  projectLocalPath?: string | null
+  extraDirs?: string[]
+} = {}) {
+  const homeDir = args.homeDir ?? os.homedir()
+  return uniquePaths([
     path.join(homeDir, ".agents", "skills"),
-    path.join(homeDir, "projects", "sas", "skills"),
-  ]
+    ...(args.projectLocalPath ? [path.join(args.projectLocalPath, ".agents", "skills")] : []),
+    ...(args.extraDirs ?? parsePathList(process.env.KANNA_SAVED_SKILLS_DIRS)),
+  ])
 }
 
 function parseSkillDescription(markdown: string) {
@@ -1287,7 +1304,8 @@ export function createWsRouter({
           return
         }
         case "skills.listSaved": {
-          const result = await listSavedSkills()
+          const project = command.projectId ? store.getProject(command.projectId) : null
+          const result = await listSavedSkills(getSavedSkillDirs({ projectLocalPath: project?.localPath }))
           send(ws, { v: PROTOCOL_VERSION, type: "ack", id, result })
           return
         }
