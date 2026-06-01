@@ -1255,6 +1255,7 @@ describe("AgentCoordinator Hermes integration", () => {
     const hermesSessionCalls: Array<{
       chatId: string
       cwd: string
+      profile?: string
       sessionToken: string | null
       pendingForkSessionToken?: string | null
     }> = []
@@ -1279,6 +1280,7 @@ describe("AgentCoordinator Hermes integration", () => {
       async startSession(args: {
         chatId: string
         cwd: string
+        profile?: string
         sessionToken: string | null
         pendingForkSessionToken?: string | null
       }) {
@@ -1314,6 +1316,7 @@ describe("AgentCoordinator Hermes integration", () => {
       type: "chat.send",
       chatId: "chat-1",
       provider: "hermes",
+      modelOptions: { hermes: { profile: "stormbreaker" } },
       content: "Review this",
       attachments: [{
         id: "file-1",
@@ -1333,6 +1336,7 @@ describe("AgentCoordinator Hermes integration", () => {
     expect(hermesSessionCalls).toEqual([{
       chatId: "chat-1",
       cwd: "/tmp/project",
+      profile: "stormbreaker",
       sessionToken: null,
       pendingForkSessionToken: null,
     }])

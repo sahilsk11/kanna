@@ -54,7 +54,7 @@ describe("ChatPreferenceControls", () => {
         availableProviders={PROVIDERS}
         selectedProvider="hermes"
         model="hermes-configured-default"
-        modelOptions={{}}
+        modelOptions={{ profile: "default" }}
         onProviderChange={() => {}}
         onModelChange={() => {}}
         onModelOptionChange={() => {}}
@@ -66,10 +66,29 @@ describe("ChatPreferenceControls", () => {
 
     expect(html).toContain("Hermes")
     expect(html).toContain("Configured Default")
+    expect(html).toContain("Default")
     expect(html).not.toContain("Fast Mode")
     expect(html).not.toContain("Plan Mode")
     expect(html).not.toContain("Full Access")
     expect(html).not.toContain("Max")
     expect(html).not.toContain("1M")
+  })
+
+  test("renders selected Hermes profiles as profile choices", () => {
+    const html = renderToStaticMarkup(
+      <ChatPreferenceControls
+        availableProviders={PROVIDERS}
+        selectedProvider="hermes"
+        model="hermes-configured-default"
+        modelOptions={{ profile: "stormbreaker" }}
+        onProviderChange={() => {}}
+        onModelChange={() => {}}
+        onModelOptionChange={() => {}}
+      />
+    )
+
+    expect(html).toContain("Hermes")
+    expect(html).toContain("Configured Default")
+    expect(html).toContain("Stormbreaker")
   })
 })

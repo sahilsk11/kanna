@@ -28,6 +28,7 @@ import {
   getServerProviderCatalog,
   normalizeClaudeModelOptions,
   normalizeCodexModelOptions,
+  normalizeHermesModelOptions,
   normalizeServerModel,
 } from "./provider-catalog"
 import { resolveClaudeApiModelId } from "../shared/types"
@@ -761,8 +762,10 @@ export class AgentCoordinator {
     }
 
     if (provider === "hermes") {
+      const modelOptions = normalizeHermesModelOptions(options.modelOptions)
       return {
         model: normalizeServerModel(provider, options.model),
+        hermesProfile: modelOptions.profile,
         effort: undefined,
         serviceTier: undefined,
         planMode: false,
@@ -814,6 +817,7 @@ export class AgentCoordinator {
       effort: settings.effort,
       serviceTier: settings.serviceTier,
       planMode: settings.planMode,
+      hermesProfile: settings.hermesProfile,
       appendUserPrompt: true,
       steered: options?.steered,
     })
@@ -837,6 +841,7 @@ export class AgentCoordinator {
     model: string
     effort?: string
     serviceTier?: "fast"
+    hermesProfile?: string
     planMode: boolean
     appendUserPrompt: boolean
     steered?: boolean
@@ -994,12 +999,20 @@ export class AgentCoordinator {
         provider: args.provider,
         model: args.model,
       })
-      const sessionToken = await manager.startSession({
-        chatId: args.chatId,
-        cwd: project.localPath,
-        sessionToken: chat.sessionToken,
-        pendingForkSessionToken: chat.pendingForkSessionToken,
-      })
+      const sessionToken = args.provider === "hermes"
+        ? await this.hermesManager.startSession({
+          chatId: args.chatId,
+          cwd: project.localPath,
+          profile: args.hermesProfile,
+          sessionToken: chat.sessionToken,
+          pendingForkSessionToken: chat.pendingForkSessionToken,
+        })
+        : await this.opencodeManager.startSession({
+          chatId: args.chatId,
+          cwd: project.localPath,
+          sessionToken: chat.sessionToken,
+          pendingForkSessionToken: chat.pendingForkSessionToken,
+        })
       if (chat.pendingForkSessionToken && sessionToken) {
         await this.store.setPendingForkSessionToken(args.chatId, null)
       }
@@ -1208,6 +1221,7 @@ export class AgentCoordinator {
       effort: settings.effort,
       serviceTier: settings.serviceTier,
       planMode: settings.planMode,
+      hermesProfile: settings.hermesProfile,
       appendUserPrompt: true,
       profile,
     })

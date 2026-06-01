@@ -62,11 +62,15 @@ describe("provider catalog normalization", () => {
     expect(normalizeServerModel("codex")).toBe("gpt-5.5")
     expect(normalizeServerModel("claude", "opus")).toBe("claude-opus-4-7")
     expect(normalizeServerModel("codex", "gpt-5-codex")).toBe("gpt-5.3-codex")
-    expect(normalizeServerModel("hermes", "gpt-5.5")).toBe(DEFAULT_HERMES_MODEL)
+    expect(normalizeServerModel("hermes", "stormbreaker")).toBe(DEFAULT_HERMES_MODEL)
+    expect(normalizeServerModel("hermes", "custom-profile")).toBe(DEFAULT_HERMES_MODEL)
+    expect(normalizeServerModel("hermes", "default")).toBe(DEFAULT_HERMES_MODEL)
   })
 
-  test("normalizes Hermes to empty configured-default model options", () => {
-    expect(normalizeHermesModelOptions()).toEqual({})
+  test("normalizes Hermes profile model options", () => {
+    expect(normalizeHermesModelOptions()).toEqual({ profile: "default" })
+    expect(normalizeHermesModelOptions({ hermes: { profile: "stormbreaker" } })).toEqual({ profile: "stormbreaker" })
+    expect(normalizeHermesModelOptions({ hermes: { profile: "custom-profile" } })).toEqual({ profile: "custom-profile" })
   })
 
   test("parses OpenCode model ids from CLI output", () => {

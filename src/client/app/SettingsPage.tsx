@@ -1746,7 +1746,11 @@ export function SettingsPage() {
                           onModelChange={(_, model) => {
                             handleProviderDefaultModelChange("hermes", model)
                           }}
-                          onModelOptionChange={() => {}}
+                          onModelOptionChange={(change) => {
+                            if (change.type === "hermesProfile") {
+                              handleProviderDefaultModelOptionsChange("hermes", { profile: change.profile })
+                            }
+                          }}
                           planMode={providerDefaults.hermes.planMode}
                           onPlanModeChange={(planMode) => handleProviderDefaultPlanModeChange("hermes", planMode)}
                           includePlanMode

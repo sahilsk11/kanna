@@ -14,10 +14,11 @@ import type {
 import {
   DEFAULT_CLAUDE_MODEL_OPTIONS,
   DEFAULT_CODEX_MODEL_OPTIONS,
-  DEFAULT_HERMES_MODEL_OPTIONS,
   DEFAULT_OPENCODE_MODEL_OPTIONS,
   PROVIDERS,
   normalizeClaudeContextWindow,
+  normalizeHermesModelId,
+  normalizeHermesProfileId,
   normalizeOpenCodeModelId,
   normalizeProviderModelId,
   isClaudeReasoningEffort,
@@ -159,6 +160,8 @@ export function normalizeServerModel(provider: AgentProvider, model?: string): s
   const catalog = getServerProviderCatalog(provider)
   const normalizedModel = provider === "opencode"
     ? normalizeOpenCodeModelId(model, catalog.defaultModel)
+    : provider === "hermes"
+      ? normalizeHermesModelId(model, catalog.defaultModel)
     : normalizeProviderModelId(provider, model, catalog.defaultModel)
   if (catalog.models.some((candidate) => candidate.id === normalizedModel)) {
     return normalizedModel
@@ -196,8 +199,10 @@ export function normalizeCodexModelOptions(modelOptions?: ModelOptions, legacyEf
   }
 }
 
-export function normalizeHermesModelOptions(): HermesModelOptions {
-  return { ...DEFAULT_HERMES_MODEL_OPTIONS }
+export function normalizeHermesModelOptions(modelOptions?: ModelOptions): HermesModelOptions {
+  return {
+    profile: normalizeHermesProfileId(modelOptions?.hermes?.profile),
+  }
 }
 
 export function normalizeOpenCodeModelOptions(): OpenCodeModelOptions {

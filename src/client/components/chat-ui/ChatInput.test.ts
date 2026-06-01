@@ -3,7 +3,14 @@ import { createElement } from "react"
 import { renderToStaticMarkup } from "react-dom/server"
 import { PROVIDERS } from "../../../shared/types"
 import { useChatPreferencesStore } from "../../stores/chatPreferencesStore"
-import { ChatInput, getClipboardImageFiles, trimTrailingPastedNewlines, willExceedAttachmentLimit } from "./ChatInput"
+import {
+  ChatInput,
+  applySlashCommandCompletion,
+  getClipboardImageFiles,
+  getSlashCommandQuery,
+  trimTrailingPastedNewlines,
+  willExceedAttachmentLimit,
+} from "./ChatInput"
 
 function createClipboardItem(args: {
   kind?: string
@@ -123,6 +130,25 @@ describe("trimTrailingPastedNewlines", () => {
 })
 
 describe("ChatInput", () => {
+  test("detects slash command queries only in the leading token", () => {
+    expect(getSlashCommandQuery("/", 1)).toBe("")
+    expect(getSlashCommandQuery("/wt", 3)).toBe("wt")
+    expect(getSlashCommandQuery("please /wt", 10)).toBeNull()
+    expect(getSlashCommandQuery("/wt now", 7)).toBeNull()
+    expect(getSlashCommandQuery("/wt", 0, 3)).toBeNull()
+  })
+
+  test("applies a slash command completion to the leading token", () => {
+    expect(applySlashCommandCompletion("/w", "wt", 2)).toEqual({
+      value: "/wt ",
+      caret: 4,
+    })
+    expect(applySlashCommandCompletion("/w existing args", "wt", 2)).toEqual({
+      value: "/wt existing args",
+      caret: 4,
+    })
+  })
+
   test("renders the mobile attachment trigger as a native file input target", () => {
     const html = renderToStaticMarkup(createElement(ChatInput, {
       onSubmit: async () => undefined,

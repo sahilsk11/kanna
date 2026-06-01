@@ -4,6 +4,7 @@ import {
   CLAUDE_CONTEXT_WINDOW_OPTIONS,
   CLAUDE_REASONING_OPTIONS,
   CODEX_REASONING_OPTIONS,
+  DEFAULT_HERMES_PROFILE,
   type AgentProvider,
   type ClaudeContextWindow,
   type ClaudeModelOptions,
@@ -14,6 +15,7 @@ import {
   type OpenCodeModelOptions,
   type ProviderCatalogEntry,
   type ProviderModelOption,
+  type ProviderProfileOption,
   supportsClaudeMaxReasoningEffort,
 } from "../../../shared/types"
 import { cn } from "../../lib/utils"
@@ -142,6 +144,7 @@ export type ModelOptionChange =
   | { type: "contextWindow"; contextWindow: ClaudeContextWindow }
   | { type: "codexReasoningEffort"; effort: CodexReasoningEffort }
   | { type: "fastMode"; fastMode: boolean }
+  | { type: "hermesProfile"; profile: string }
 
 function getModelSearchText(model: ProviderModelOption) {
   return [model.id, model.label, ...(model.aliases ?? [])].join(" ").toLowerCase()
@@ -168,7 +171,6 @@ function ModelPickerPopover({
       : provider.models,
     [normalizedQuery, provider.models]
   )
-
   return (
     <Popover
       open={open}
@@ -239,6 +241,112 @@ function ModelPickerPopover({
   )
 }
 
+function getProfileSearchText(profile: ProviderProfileOption) {
+  return [profile.id, profile.label, ...(profile.aliases ?? [])].join(" ").toLowerCase()
+}
+
+function ProfilePickerPopover({
+  provider,
+  selectedProfile,
+  onProfileChange,
+}: {
+  provider: ProviderCatalogEntry
+  selectedProfile: string
+  onProfileChange: (profile: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState("")
+  const profiles = provider.profiles ?? []
+  const selectedLabel = profiles.find((candidate) => candidate.id === selectedProfile)?.label ?? selectedProfile
+  const normalizedQuery = query.trim().toLowerCase()
+  const filteredProfiles = useMemo(
+    () => normalizedQuery
+      ? profiles.filter((candidate) => getProfileSearchText(candidate).includes(normalizedQuery))
+      : profiles,
+    [normalizedQuery, profiles]
+  )
+  const customProfile = query.trim()
+  const canUseCustomProfile = Boolean(customProfile)
+    && !profiles.some((candidate) => candidate.id === customProfile || candidate.aliases?.includes(customProfile))
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen)
+        if (!nextOpen) {
+          setQuery("")
+        }
+      }}
+    >
+      <PopoverTrigger asChild>
+        <button
+          className="flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-sm text-muted-foreground transition-colors [&>svg]:shrink-0 hover:bg-muted/50"
+        >
+          <SquareMenu className="h-3.5 w-3.5" />
+          <span className="max-w-[16rem] truncate whitespace-nowrap">{selectedLabel}</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent align="center" className="w-[min(22rem,calc(100vw-2rem))] p-2">
+        <div className="space-y-2">
+          <div className="flex h-9 items-center gap-2 rounded-md border border-border bg-background px-2">
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="Search profiles"
+              className="h-full min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              autoFocus
+            />
+          </div>
+          <div className="max-h-64 overflow-y-auto pr-1">
+            {filteredProfiles.length > 0 || canUseCustomProfile ? (
+              <div className="space-y-1">
+                {filteredProfiles.map((candidate) => (
+                  <button
+                    key={candidate.id}
+                    type="button"
+                    onClick={() => {
+                      onProfileChange(candidate.id)
+                      setOpen(false)
+                      setQuery("")
+                    }}
+                    className={cn(
+                      "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+                      selectedProfile === candidate.id ? "bg-muted text-foreground" : "text-muted-foreground hover:bg-muted/50 hover:text-foreground"
+                    )}
+                    title={candidate.id}
+                  >
+                    <SquareMenu className="h-3.5 w-3.5 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">{candidate.label}</span>
+                  </button>
+                ))}
+                {canUseCustomProfile ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onProfileChange(customProfile)
+                      setOpen(false)
+                      setQuery("")
+                    }}
+                    className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                    title={customProfile}
+                  >
+                    <SquareMenu className="h-3.5 w-3.5 shrink-0" />
+                    <span className="min-w-0 flex-1 truncate">Use profile {customProfile}</span>
+                  </button>
+                ) : null}
+              </div>
+            ) : (
+              <div className="px-2 py-6 text-center text-sm text-muted-foreground">No profiles found.</div>
+            )}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
+}
+
 interface ChatPreferenceControlsProps {
   availableProviders: ProviderCatalogEntry[]
   selectedProvider: AgentProvider
@@ -280,6 +388,8 @@ export function ChatPreferenceControls({
     : providerConfig?.defaultModel ?? model
   const claudeModelOptions = selectedProvider === "claude" ? modelOptions as ClaudeModelOptions : null
   const codexModelOptions = selectedProvider === "codex" ? modelOptions as CodexModelOptions : null
+  const hermesModelOptions = selectedProvider === "hermes" ? modelOptions as HermesModelOptions : null
+  const selectedHermesProfile = hermesModelOptions?.profile ?? DEFAULT_HERMES_PROFILE
   const contextWindowOptions = providerConfig?.models.find((candidate) => candidate.id === selectedModel)?.contextWindowOptions ?? []
   const selectedContextWindow = claudeModelOptions?.contextWindow ?? CLAUDE_CONTEXT_WINDOW_OPTIONS[0].id
   const ContextWindowIcon = selectedContextWindow === "1m" ? SquareMenu : SquareMinus
@@ -325,6 +435,14 @@ export function ChatPreferenceControls({
           selectedModel={selectedModel}
           showCodexCliRequirementHints={showCodexCliRequirementHints}
           onModelChange={(nextModel) => onModelChange(selectedProvider, nextModel)}
+        />
+      ) : null}
+
+      {selectedProvider === "hermes" && providerConfig?.profiles?.length ? (
+        <ProfilePickerPopover
+          provider={providerConfig}
+          selectedProfile={selectedHermesProfile}
+          onProfileChange={(profile) => onModelOptionChange({ type: "hermesProfile", profile })}
         />
       ) : null}
 

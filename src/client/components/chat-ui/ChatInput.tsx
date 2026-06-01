@@ -8,6 +8,8 @@ import {
   type CodexReasoningEffort,
   type ModelOptions,
   type ProviderCatalogEntry,
+  type SavedSkillSummary,
+  type SavedSkillsSnapshot,
   normalizeClaudeContextWindow,
   resolveClaudeContextWindowTokens,
 } from "../../../shared/types"
@@ -25,9 +27,11 @@ import { AttachmentFileCard, AttachmentImageCard } from "../messages/AttachmentC
 import { AttachmentPreviewModal } from "../messages/AttachmentPreviewModal"
 import { classifyAttachmentPreview } from "../messages/attachmentPreview"
 import { overrideContextWindowMaxTokens, type ContextWindowSnapshot } from "../../lib/contextWindow"
+import type { KannaSocket } from "../../app/socket"
 
 const MAX_FILES_PER_DROP = 50
 const MAX_CONCURRENT_UPLOADS = 3
+const MAX_SLASH_COMMAND_SUGGESTIONS = 8
 
 const CLIPBOARD_EXTENSION_BY_MIME_TYPE: Record<string, string> = {
   "image/gif": "gif",
@@ -104,6 +108,23 @@ function replaceTextSelection(args: {
   return `${args.value.slice(0, args.selectionStart)}${args.insertedText}${args.value.slice(args.selectionEnd)}`
 }
 
+export function getSlashCommandQuery(value: string, selectionStart: number, selectionEnd = selectionStart) {
+  if (selectionStart !== selectionEnd || !value.startsWith("/")) return null
+  const prefix = value.slice(0, selectionStart)
+  if (!prefix.startsWith("/") || /\s/.test(prefix)) return null
+  return prefix.slice(1)
+}
+
+export function applySlashCommandCompletion(value: string, skillName: string, selectionStart: number) {
+  const tokenEnd = value.search(/\s/)
+  const replaceEnd = tokenEnd === -1 ? selectionStart : tokenEnd
+  const nextValue = `/${skillName} ${value.slice(replaceEnd).replace(/^\s*/, "")}`
+  return {
+    value: nextValue,
+    caret: Math.min(nextValue.length, skillName.length + 2),
+  }
+}
+
 interface ComposerAttachment extends ChatAttachment {
   status: "uploading" | "uploaded" | "failed"
   previewUrl?: string
@@ -123,6 +144,7 @@ interface Props {
   inputElementRef?: React.Ref<HTMLTextAreaElement>
   activeProvider: AgentProvider | null
   availableProviders: ProviderCatalogEntry[]
+  socket?: KannaSocket
   contextWindowSnapshot?: ContextWindowSnapshot | null
   previousPrompt?: string | null
 }
@@ -198,6 +220,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   inputElementRef,
   activeProvider,
   availableProviders,
+  socket,
   contextWindowSnapshot = null,
   previousPrompt = null,
 }, forwardedRef) {
@@ -226,6 +249,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [attachments, setAttachments] = useState<ComposerAttachment[]>(() => hydrateComposerAttachments(chatId ? getAttachmentDrafts(chatId) : []))
   const [selectedAttachmentId, setSelectedAttachmentId] = useState<string | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
+  const [savedSkills, setSavedSkills] = useState<SavedSkillSummary[]>([])
+  const [savedSkillsLoaded, setSavedSkillsLoaded] = useState(false)
+  const [slashSelectionIndex, setSlashSelectionIndex] = useState(0)
+  const [slashMenuDismissedFor, setSlashMenuDismissedFor] = useState<string | null>(null)
   const uploadQueueRef = useRef<File[]>([])
   const activeUploadsRef = useRef(0)
   const attachmentsRef = useRef<ComposerAttachment[]>([])
@@ -259,6 +286,17 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     return left.kind === "image" ? -1 : 1
   })
   const selectedAttachment = attachments.find((attachment) => attachment.id === selectedAttachmentId) ?? null
+  const slashQuery = typeof document === "undefined"
+    ? null
+    : getSlashCommandQuery(value, textareaRef.current?.selectionStart ?? value.length, textareaRef.current?.selectionEnd ?? value.length)
+  const slashSuggestions = useMemo(() => {
+    if (slashQuery === null || slashMenuDismissedFor === slashQuery) return []
+    const normalizedQuery = slashQuery.toLowerCase()
+    return savedSkills
+      .filter((skill) => skill.name.toLowerCase().startsWith(normalizedQuery))
+      .slice(0, MAX_SLASH_COMMAND_SUGGESTIONS)
+  }, [savedSkills, slashMenuDismissedFor, slashQuery])
+  const showSlashSuggestions = slashQuery !== null && slashSuggestions.length > 0
 
   const cleanupAttachmentPreview = useCallback((attachment: ComposerAttachment) => {
     if (attachment.previewUrl) {
@@ -331,6 +369,29 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   useEffect(() => {
     latestChatIdRef.current = chatId ?? null
   }, [chatId])
+
+  useEffect(() => {
+    if (!socket || savedSkillsLoaded || slashQuery === null) return
+    let cancelled = false
+    void socket.command<SavedSkillsSnapshot>({ type: "skills.listSaved" })
+      .then((snapshot) => {
+        if (cancelled) return
+        setSavedSkills(snapshot.skills)
+        setSavedSkillsLoaded(true)
+      })
+      .catch((error) => {
+        if (cancelled) return
+        console.error("[ChatInput] Failed to load saved skills:", error)
+        setSavedSkillsLoaded(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [savedSkillsLoaded, slashQuery, socket])
+
+  useEffect(() => {
+    setSlashSelectionIndex(0)
+  }, [slashQuery])
 
   useEffect(() => {
     initializeComposerForChat(composerChatId)
@@ -573,7 +634,47 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     }
   }
 
+  function acceptSlashSuggestion(skillName: string) {
+    const textarea = textareaRef.current
+    const selectionStart = textarea?.selectionStart ?? value.length
+    const completed = applySlashCommandCompletion(value, skillName, selectionStart)
+    setValue(completed.value)
+    if (chatId) setDraft(chatId, completed.value)
+    setSlashMenuDismissedFor(null)
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus()
+      if (textareaRef.current) {
+        textareaRef.current.selectionStart = completed.caret
+        textareaRef.current.selectionEnd = completed.caret
+      }
+      autoResize()
+    })
+  }
+
   function handleKeyDown(event: React.KeyboardEvent) {
+    if (showSlashSuggestions) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault()
+        setSlashSelectionIndex((index) => (index + 1) % slashSuggestions.length)
+        return
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault()
+        setSlashSelectionIndex((index) => (index - 1 + slashSuggestions.length) % slashSuggestions.length)
+        return
+      }
+      if (event.key === "Enter" || event.key === "Tab") {
+        event.preventDefault()
+        acceptSlashSuggestion(slashSuggestions[Math.min(slashSelectionIndex, slashSuggestions.length - 1)].name)
+        return
+      }
+      if (event.key === "Escape") {
+        event.preventDefault()
+        setSlashMenuDismissedFor(slashQuery)
+        return
+      }
+    }
+
     if (event.key === "Tab" && !event.shiftKey) {
       event.preventDefault()
       focusNextChatInput(textareaRef.current, document)
@@ -675,7 +776,34 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   return (
     <div>
       <div className={cn("px-3 pt-0", isStandalone && "px-5")}>
-        <div className="max-w-[840px] mx-auto rounded-[32px]">
+        <div className="relative max-w-[840px] mx-auto rounded-[32px]">
+          {showSlashSuggestions ? (
+            <div className="absolute left-0 right-0 bottom-[calc(100%+0.5rem)] z-30 mx-2 overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-lg">
+              <div className="max-h-[240px] overflow-y-auto p-1">
+                {slashSuggestions.map((skill, index) => (
+                  <button
+                    key={skill.name}
+                    type="button"
+                    className={cn(
+                      "flex h-9 w-full items-center gap-1.5 rounded-md px-3 text-left text-sm",
+                      index === slashSelectionIndex ? "bg-accent text-accent-foreground" : "hover:bg-accent/70"
+                    )}
+                    onPointerDown={(event) => {
+                      event.preventDefault()
+                      acceptSlashSuggestion(skill.name)
+                    }}
+                  >
+                    <span className="w-2 shrink-0 font-mono text-muted-foreground">/</span>
+                    <span className="shrink-0 truncate">{skill.name}</span>
+                    {skill.description ? (
+                      <span className="min-w-0 truncate pl-2 text-xs text-muted-foreground">{skill.description}</span>
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
           {attachments.length > 0 ? (
             <ScrollArea className="overflow-x-auto overflow-y-hidden whitespace-nowrap px-2 pb-2">
               <div className="flex items-end gap-2 pt-2">
@@ -740,6 +868,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               onChange={(event) => {
                 setValue(event.target.value)
                 if (chatId) setDraft(chatId, event.target.value)
+                setSlashMenuDismissedFor(null)
                 autoResize()
               }}
               onPaste={handlePaste}
@@ -818,6 +947,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     (state) => state.provider !== "codex"
                       ? state
                       : { ...state, modelOptions: { ...state.modelOptions, fastMode: change.fastMode } }
+                  )
+                  break
+                case "hermesProfile":
+                  updateComposerState(
+                    (state) => state.provider !== "hermes"
+                      ? state
+                      : { ...state, modelOptions: { ...state.modelOptions, profile: change.profile } }
                   )
                   break
               }

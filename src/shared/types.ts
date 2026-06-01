@@ -12,6 +12,8 @@ export type EditorPreset = "cursor" | "vscode" | "xcode" | "windsurf" | "custom"
 export const DEFAULT_OPENAI_SDK_MODEL = "gpt-5.4-mini"
 export const DEFAULT_OPENROUTER_SDK_MODEL = "moonshotai/kimi-k2.5:nitro"
 export const DEFAULT_HERMES_MODEL = "hermes-configured-default"
+export const DEFAULT_HERMES_PROFILE = "default"
+export const HERMES_STORMBREAKER_PROFILE = "stormbreaker"
 export const DEFAULT_OPENCODE_MODEL = "opencode-configured-default"
 
 export type AttachmentKind = "image" | "file"
@@ -65,6 +67,16 @@ export interface InstalledSkillSummary {
 export interface InstalledSkillsSnapshot {
   lockFilePath: string
   skills: InstalledSkillSummary[]
+}
+
+export interface SavedSkillSummary {
+  name: string
+  description: string
+}
+
+export interface SavedSkillsSnapshot {
+  skills: SavedSkillSummary[]
+  checkedDirs: string[]
 }
 
 export interface ChatAttachment {
@@ -154,6 +166,12 @@ export interface ProviderContextWindowOption {
   label: string
 }
 
+export interface ProviderProfileOption {
+  id: string
+  label: string
+  aliases?: readonly string[]
+}
+
 export const CLAUDE_REASONING_OPTIONS = [
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },
@@ -184,7 +202,9 @@ export interface CodexModelOptions {
   fastMode: boolean
 }
 
-export interface HermesModelOptions {}
+export interface HermesModelOptions {
+  profile: string
+}
 export interface OpenCodeModelOptions {}
 
 export interface ProviderModelOptionsByProvider {
@@ -221,7 +241,9 @@ export const DEFAULT_CODEX_MODEL_OPTIONS = {
   fastMode: false,
 } as const satisfies CodexModelOptions
 
-export const DEFAULT_HERMES_MODEL_OPTIONS = {} as const satisfies HermesModelOptions
+export const DEFAULT_HERMES_MODEL_OPTIONS = {
+  profile: DEFAULT_HERMES_PROFILE,
+} as const satisfies HermesModelOptions
 export const DEFAULT_OPENCODE_MODEL_OPTIONS = {} as const satisfies OpenCodeModelOptions
 
 export function isClaudeReasoningEffort(value: unknown): value is ClaudeReasoningEffort {
@@ -249,6 +271,7 @@ export interface ProviderCatalogEntry {
   supportsPlanMode: boolean
   models: ProviderModelOption[]
   efforts: ProviderEffortOption[]
+  profiles?: ProviderProfileOption[]
 }
 
 export const PROVIDERS: ProviderCatalogEntry[] = [
@@ -305,6 +328,10 @@ export const PROVIDERS: ProviderCatalogEntry[] = [
       { id: DEFAULT_HERMES_MODEL, label: "Configured Default", supportsEffort: false, aliases: ["default"] },
     ],
     efforts: [],
+    profiles: [
+      { id: DEFAULT_HERMES_PROFILE, label: "Default" },
+      { id: HERMES_STORMBREAKER_PROFILE, label: "Stormbreaker" },
+    ],
   },
   {
     id: "opencode",
@@ -354,6 +381,15 @@ export function normalizeCodexModelId(modelId?: string, fallbackModelId = "gpt-5
 
 export function normalizeHermesModelId(modelId?: string, fallbackModelId = DEFAULT_HERMES_MODEL): string {
   return normalizeProviderModelId("hermes", modelId, fallbackModelId)
+}
+
+export function normalizeHermesProfileId(profileId?: string, fallbackProfileId = DEFAULT_HERMES_PROFILE): string {
+  const trimmedProfileId = typeof profileId === "string" ? profileId.trim() : ""
+  if (!trimmedProfileId || trimmedProfileId === DEFAULT_HERMES_MODEL) return fallbackProfileId
+  const profile = getProviderCatalog("hermes").profiles?.find((candidate) =>
+    candidate.id === trimmedProfileId || candidate.aliases?.includes(trimmedProfileId)
+  )
+  return profile?.id ?? trimmedProfileId
 }
 
 export function normalizeOpenCodeModelId(modelId?: string, fallbackModelId = DEFAULT_OPENCODE_MODEL): string {

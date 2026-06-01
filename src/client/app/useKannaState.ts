@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useShallow } from "zustand/react/shallow"
-import { PROVIDERS, type AgentProvider, type AppSettingsPatch, type AppSettingsSnapshot, type AskUserQuestionAnswerMap, type ChatAttachment, type ChatDiffSnapshot, type ChatHistoryPage, type KeybindingsSnapshot, type LlmProviderSnapshot, type LlmProviderValidationResult, type ModelOptions, type ProviderCatalogEntry, type QueuedChatMessage, type StandaloneTranscriptExportCommandResult, type TranscriptEntry, type UpdateInstallResult, type UpdateSnapshot, type UserPromptEntry } from "../../shared/types"
+import { DEFAULT_HERMES_MODEL_OPTIONS, PROVIDERS, type AgentProvider, type AppSettingsPatch, type AppSettingsSnapshot, type AskUserQuestionAnswerMap, type ChatAttachment, type ChatDiffSnapshot, type ChatHistoryPage, type KeybindingsSnapshot, type LlmProviderSnapshot, type LlmProviderValidationResult, type ModelOptions, type ProviderCatalogEntry, type QueuedChatMessage, type StandaloneTranscriptExportCommandResult, type TranscriptEntry, type UpdateInstallResult, type UpdateSnapshot, type UserPromptEntry } from "../../shared/types"
 import { NEW_CHAT_COMPOSER_ID, type ComposerState, useChatPreferencesStore } from "../stores/chatPreferencesStore"
 import { useRightSidebarStore } from "../stores/rightSidebarStore"
 import { useTerminalLayoutStore } from "../stores/terminalLayoutStore"
@@ -266,7 +266,13 @@ function readLegacyBrowserSettingsPatch(): AppSettingsPatch | null {
   }
 
   const chatPreferencesState = readPersistedZustandState(LEGACY_CHAT_PREFERENCES_STORAGE_KEY)
-  if (chatPreferencesState?.defaultProvider === "last_used" || chatPreferencesState?.defaultProvider === "claude" || chatPreferencesState?.defaultProvider === "codex") {
+  if (
+    chatPreferencesState?.defaultProvider === "last_used"
+    || chatPreferencesState?.defaultProvider === "claude"
+    || chatPreferencesState?.defaultProvider === "codex"
+    || chatPreferencesState?.defaultProvider === "hermes"
+    || chatPreferencesState?.defaultProvider === "opencode"
+  ) {
     patch.defaultProvider = chatPreferencesState.defaultProvider
   }
   if (chatPreferencesState?.providerDefaults && typeof chatPreferencesState.providerDefaults === "object") {
@@ -493,6 +499,27 @@ function composerStateFromSendOptions(options?: {
         reasoningEffort: options.modelOptions.codex.reasoningEffort ?? "high",
         fastMode: options.modelOptions.codex.fastMode ?? false,
       },
+      planMode: Boolean(options.planMode),
+    }
+  }
+
+  if (options?.provider === "hermes" && options.model) {
+    return {
+      provider: "hermes",
+      model: options.model,
+      modelOptions: {
+        ...DEFAULT_HERMES_MODEL_OPTIONS,
+        ...options.modelOptions?.hermes,
+      },
+      planMode: Boolean(options.planMode),
+    }
+  }
+
+  if (options?.provider === "opencode" && options.model) {
+    return {
+      provider: "opencode",
+      model: options.model,
+      modelOptions: options.modelOptions?.opencode ?? {},
       planMode: Boolean(options.planMode),
     }
   }

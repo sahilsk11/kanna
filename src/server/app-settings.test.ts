@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { AppSettingsManager, readAppSettingsSnapshot } from "./app-settings"
-import type { AppSettingsSnapshot } from "../shared/types"
+import { DEFAULT_HERMES_MODEL_OPTIONS, type AppSettingsSnapshot } from "../shared/types"
 
 let tempDirs: string[] = []
 
@@ -54,7 +54,7 @@ function expectedSettingsSnapshot(filePath: string, overrides: Partial<AppSettin
       },
       hermes: {
         model: "hermes-configured-default",
-        modelOptions: {},
+        modelOptions: { ...DEFAULT_HERMES_MODEL_OPTIONS },
         planMode: false,
       },
       opencode: {
@@ -181,8 +181,8 @@ describe("AppSettingsManager", () => {
       defaultProvider: "hermes",
       providerDefaults: {
         hermes: {
-          model: "gpt-5.5",
-          modelOptions: { reasoningEffort: "xhigh", fastMode: true },
+          model: "stormbreaker",
+          modelOptions: { profile: "stormbreaker", reasoningEffort: "xhigh", fastMode: true },
           planMode: true,
         },
       },
@@ -193,7 +193,7 @@ describe("AppSettingsManager", () => {
     expect(snapshot.defaultProvider).toBe("hermes")
     expect(snapshot.providerDefaults.hermes).toEqual({
       model: "hermes-configured-default",
-      modelOptions: {},
+      modelOptions: { profile: "stormbreaker" },
       planMode: true,
     })
     expect(snapshot.providerDefaults.codex).toEqual(expectedSettingsSnapshot(filePath).providerDefaults.codex)

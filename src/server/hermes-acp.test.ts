@@ -87,6 +87,32 @@ describe("HermesAcpManager", () => {
     })
   })
 
+  test("passes selected Hermes profile to the ACP bridge process", async () => {
+    const spawnCalls: Array<{ cwd: string; hermesProfile?: string | null }> = []
+    const process = new FakeHermesProcess((message, child) => {
+      if (message.method === "initialize") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: 1 } })
+      } else if (message.method === "session/new") {
+        child.writeAgentMessage({ jsonrpc: "2.0", id: message.id, result: { sessionId: "hermes-session-1" } })
+      }
+    })
+    const manager = new HermesAcpManager({
+      spawnProcess: (cwd, options) => {
+        spawnCalls.push({ cwd, hermesProfile: options?.hermesProfile })
+        return process as never
+      },
+    })
+
+    await manager.startSession({
+      chatId: "chat-1",
+      cwd: "/tmp/project",
+      profile: "stormbreaker",
+      sessionToken: null,
+    })
+
+    expect(spawnCalls).toEqual([{ cwd: "/tmp/project", hermesProfile: "stormbreaker" }])
+  })
+
   test("reinitializes existing context when no Hermes session token was cached", async () => {
     const processes: FakeHermesProcess[] = []
     const manager = new HermesAcpManager({

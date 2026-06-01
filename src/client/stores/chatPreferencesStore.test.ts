@@ -69,7 +69,7 @@ describe("migrateChatPreferencesState", () => {
         },
         hermes: {
           model: "hermes-configured-default",
-          modelOptions: {},
+          modelOptions: { profile: "default" },
           planMode: false,
         },
         opencode: {
@@ -186,7 +186,7 @@ describe("migrateChatPreferencesState", () => {
       defaultProvider: "hermes",
       providerDefaults: {
         hermes: {
-          model: "gpt-5.5",
+          model: "stormbreaker",
           modelOptions: { reasoningEffort: "xhigh", fastMode: true },
           planMode: true,
         },
@@ -204,13 +204,13 @@ describe("migrateChatPreferencesState", () => {
     expect(migrated.defaultProvider).toBe("hermes")
     expect(migrated.providerDefaults.hermes).toEqual({
       model: "hermes-configured-default",
-      modelOptions: {},
+      modelOptions: { profile: "stormbreaker" },
       planMode: true,
     })
     expect(migrated.chatStates.chatA).toEqual({
       provider: "hermes",
       model: "hermes-configured-default",
-      modelOptions: {},
+      modelOptions: { profile: "default" },
       planMode: false,
     })
     expect(migrated.providerDefaults.codex).toEqual({
@@ -233,7 +233,7 @@ describe("chat preference store", () => {
   test("starts with Hermes configured defaults", () => {
     expect(INITIAL_STATE.providerDefaults.hermes).toEqual({
       model: "hermes-configured-default",
-      modelOptions: {},
+      modelOptions: { profile: "default" },
       planMode: false,
     })
   })
@@ -366,7 +366,7 @@ describe("chat preference store", () => {
         ...INITIAL_STATE.providerDefaults,
         hermes: {
           model: "hermes-configured-default",
-          modelOptions: {},
+          modelOptions: { profile: "stormbreaker" },
           planMode: true,
         },
       },
@@ -377,7 +377,7 @@ describe("chat preference store", () => {
     expect(useChatPreferencesStore.getState().getComposerState("chat-a")).toEqual({
       provider: "hermes",
       model: "hermes-configured-default",
-      modelOptions: {},
+      modelOptions: { profile: "stormbreaker" },
       planMode: true,
     })
   })

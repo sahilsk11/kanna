@@ -17,6 +17,7 @@ import {
   normalizeClaudeModelId,
   normalizeCodexModelId,
   normalizeHermesModelId,
+  normalizeHermesProfileId,
   normalizeOpenCodeModelId,
   supportsClaudeMaxReasoningEffort,
   type AppSettingsPatch,
@@ -232,11 +233,16 @@ function normalizeCodexPreference(value?: {
 
 function normalizeHermesPreference(value?: {
   model?: unknown
+  modelOptions?: Partial<Record<keyof HermesModelOptions, unknown>>
   planMode?: unknown
 }): ProviderPreference<HermesModelOptions> {
+  const rawModel = typeof value?.model === "string" ? value.model : undefined
+  const rawProfile = typeof value?.modelOptions?.profile === "string" ? value.modelOptions.profile : undefined
   return {
-    model: normalizeHermesModelId(typeof value?.model === "string" ? value.model : undefined),
-    modelOptions: { ...DEFAULT_HERMES_MODEL_OPTIONS },
+    model: normalizeHermesModelId(rawModel),
+    modelOptions: {
+      profile: normalizeHermesProfileId(rawProfile ?? rawModel),
+    },
     planMode: value?.planMode === true,
   }
 }

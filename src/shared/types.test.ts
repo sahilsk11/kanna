@@ -5,6 +5,7 @@ import {
   normalizeClaudeModelId,
   normalizeCodexModelId,
   normalizeHermesModelId,
+  normalizeHermesProfileId,
   normalizeOpenCodeModelId,
   supportsClaudeMaxReasoningEffort,
 } from "./types"
@@ -21,10 +22,17 @@ describe("shared model normalization", () => {
     expect(normalizeCodexModelId("gpt-5-codex")).toBe("gpt-5.3-codex")
   })
 
-  test("normalizes Hermes to its configured default placeholder", () => {
+  test("normalizes Hermes model ids to configured defaults", () => {
     expect(normalizeHermesModelId()).toBe(DEFAULT_HERMES_MODEL)
     expect(normalizeHermesModelId("default")).toBe(DEFAULT_HERMES_MODEL)
-    expect(normalizeHermesModelId("gpt-5.5")).toBe(DEFAULT_HERMES_MODEL)
+    expect(normalizeHermesModelId("stormbreaker")).toBe(DEFAULT_HERMES_MODEL)
+    expect(normalizeHermesModelId("custom-profile")).toBe(DEFAULT_HERMES_MODEL)
+  })
+
+  test("normalizes Hermes profiles while preserving custom profile ids", () => {
+    expect(normalizeHermesProfileId()).toBe("default")
+    expect(normalizeHermesProfileId("stormbreaker")).toBe("stormbreaker")
+    expect(normalizeHermesProfileId("custom-profile")).toBe("custom-profile")
   })
 
   test("normalizes OpenCode defaults while preserving model ids from discovery", () => {

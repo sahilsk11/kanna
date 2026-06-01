@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import type { AppSettingsSnapshot, KeybindingsSnapshot, LlmProviderSnapshot, UpdateSnapshot } from "../shared/types"
@@ -12,6 +12,7 @@ import {
   buildUninstallSkillCommand,
   createWsRouter,
   listInstalledSkills,
+  listSavedSkills,
   parseInstalledSkillsLock,
 } from "./ws-router"
 import { SERVER_PROVIDERS } from "./provider-catalog"
@@ -106,7 +107,7 @@ const DEFAULT_APP_SETTINGS_SNAPSHOT: AppSettingsSnapshot = {
     },
     hermes: {
       model: "hermes-configured-default",
-      modelOptions: {},
+      modelOptions: { profile: "default" },
       planMode: false,
     },
     opencode: {
@@ -175,6 +176,29 @@ describe("skills helpers", () => {
         lockFilePath: invalidPath,
         skills: [],
       })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("lists saved skill directory names without reading skill contents", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "kanna-saved-skills-"))
+    try {
+      const globalSkills = path.join(dir, ".agents", "skills")
+      const sasSkills = path.join(dir, "projects", "sas", "skills")
+      await mkdir(path.join(globalSkills, "wt"), { recursive: true })
+      await mkdir(path.join(globalSkills, ".hidden"), { recursive: true })
+      await mkdir(path.join(sasSkills, "fresh"), { recursive: true })
+      await mkdir(path.join(sasSkills, "wt"), { recursive: true })
+      await writeFile(path.join(sasSkills, "fresh", "SKILL.md"), "---\ndescription: Start from a clean main checkout.\n---\n", "utf8")
+
+      const snapshot = await listSavedSkills([globalSkills, sasSkills])
+
+      expect(snapshot.checkedDirs).toEqual([globalSkills, sasSkills])
+      expect(snapshot.skills).toEqual([
+        { name: "fresh", description: "Start from a clean main checkout." },
+        { name: "wt", description: "" },
+      ])
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

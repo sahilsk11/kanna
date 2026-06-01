@@ -46,7 +46,7 @@ export interface AcpProcess {
   on(event: "error", listener: (error: Error) => void): this
 }
 
-export type SpawnAcp = (cwd: string) => AcpProcess
+export type SpawnAcp = (cwd: string, options?: { hermesProfile?: string | null }) => AcpProcess
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url))
 const HERMES_ACP_BRIDGE_PATH = path.join(SERVER_DIR, "hermes-acp-bridge.cjs")
@@ -70,6 +70,7 @@ interface SessionContext {
   chatId: string
   cwd: string
   child: AcpProcess
+  hermesProfile: string | null
   pendingRequests: Map<HermesAcpRequestId, PendingRequest<unknown>>
   pendingTurn: PendingTurn | null
   sessionToken: string | null
@@ -80,6 +81,7 @@ interface SessionContext {
 export interface StartHermesSessionArgs {
   chatId: string
   cwd: string
+  profile?: string
   sessionToken: string | null
   pendingForkSessionToken?: string | null
 }
@@ -386,6 +388,12 @@ function chooseDenyOutcome(options: PermissionOption[]): RequestPermissionRespon
   }
 }
 
+function hermesProfileForBridge(profile?: string | null): string | null {
+  const trimmed = typeof profile === "string" ? profile.trim() : ""
+  if (!trimmed || trimmed === "default") return null
+  return trimmed
+}
+
 export class HermesAcpManager {
   private readonly sessions = new Map<string, SessionContext>()
   private readonly spawnProcess: SpawnAcp
@@ -401,17 +409,28 @@ export class HermesAcpManager {
       fallbackToolName: "HermesTool",
       ...args.providerConfig,
     }
-    this.spawnProcess = args.spawnProcess ?? ((cwd) =>
-      spawn(process.execPath, [HERMES_ACP_BRIDGE_PATH], {
+    this.spawnProcess = args.spawnProcess ?? ((cwd, options) =>
+      spawn("node", [HERMES_ACP_BRIDGE_PATH], {
         cwd,
         stdio: ["pipe", "pipe", "pipe"],
-        env: process.env,
+        env: {
+          ...process.env,
+          ...(options?.hermesProfile ? { KANNA_HERMES_PROFILE: options.hermesProfile } : {}),
+        },
       }) as unknown as AcpProcess)
   }
 
   async startSession(args: StartHermesSessionArgs): Promise<string | undefined> {
     const existing = this.sessions.get(args.chatId)
-    if (existing && !existing.closed && existing.cwd === args.cwd && !args.pendingForkSessionToken && existing.sessionToken) {
+    const hermesProfile = hermesProfileForBridge(args.profile)
+    if (
+      existing
+      && !existing.closed
+      && existing.cwd === args.cwd
+      && existing.hermesProfile === hermesProfile
+      && !args.pendingForkSessionToken
+      && existing.sessionToken
+    ) {
       return existing.sessionToken
     }
 
@@ -419,11 +438,12 @@ export class HermesAcpManager {
       this.stopSession(args.chatId)
     }
 
-    const child = this.spawnProcess(args.cwd)
+    const child = this.spawnProcess(args.cwd, { hermesProfile })
     const context: SessionContext = {
       chatId: args.chatId,
       cwd: args.cwd,
       child,
+      hermesProfile,
       pendingRequests: new Map(),
       pendingTurn: null,
       sessionToken: null,
@@ -480,6 +500,7 @@ export class HermesAcpManager {
       chatId,
       cwd,
       child,
+      hermesProfile: null,
       pendingRequests: new Map(),
       pendingTurn: null,
       sessionToken: null,

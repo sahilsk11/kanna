@@ -10,6 +10,7 @@ import {
   normalizeClaudeModelId,
   normalizeCodexModelId,
   normalizeHermesModelId,
+  normalizeHermesProfileId,
   normalizeOpenCodeModelId,
   isClaudeReasoningEffort,
   isCodexReasoningEffort,
@@ -202,7 +203,9 @@ export function normalizeHermesPreference(value?: {
 }): ProviderPreference<HermesModelOptions> {
   return {
     model: normalizeHermesModelId(value?.model),
-    modelOptions: { ...DEFAULT_HERMES_MODEL_OPTIONS },
+    modelOptions: {
+      profile: normalizeHermesProfileId(value?.modelOptions?.profile ?? value?.model),
+    },
     planMode: Boolean(value?.planMode),
   }
 }
@@ -411,7 +414,7 @@ function sameComposerState(left: ComposerState | undefined, right: ComposerState
   }
 
   if (left.provider === "hermes" && right.provider === "hermes") {
-    return true
+    return left.modelOptions.profile === right.modelOptions.profile
   }
 
   return left.provider === "opencode" && right.provider === "opencode"

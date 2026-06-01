@@ -32,7 +32,7 @@ function settingsSnapshot(): AppSettingsSnapshot {
       },
       hermes: {
         model: "hermes-configured-default",
-        modelOptions: {},
+        modelOptions: { profile: "default" },
         planMode: false,
       },
       opencode: {
@@ -60,7 +60,7 @@ describe("mergeAppSettingsPatch", () => {
     expect(merged.defaultProvider).toBe("hermes")
     expect(merged.providerDefaults.hermes).toEqual({
       model: "hermes-configured-default",
-      modelOptions: {},
+      modelOptions: { profile: "default" },
       planMode: true,
     })
     expect(merged.providerDefaults.codex).toEqual(settingsSnapshot().providerDefaults.codex)
