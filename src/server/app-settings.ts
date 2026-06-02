@@ -7,6 +7,8 @@ import { getSettingsFilePath, LOG_PREFIX } from "../shared/branding"
 import {
   DEFAULT_CLAUDE_MODEL_OPTIONS,
   DEFAULT_CODEX_MODEL_OPTIONS,
+  DEFAULT_CURSOR_MODEL,
+  DEFAULT_CURSOR_MODEL_OPTIONS,
   DEFAULT_HERMES_MODEL,
   DEFAULT_HERMES_MODEL_OPTIONS,
   DEFAULT_OPENCODE_MODEL,
@@ -16,6 +18,7 @@ import {
   normalizeClaudeContextWindow,
   normalizeClaudeModelId,
   normalizeCodexModelId,
+  normalizeCursorModelId,
   normalizeHermesModelId,
   normalizeOpenCodeModelId,
   supportsClaudeMaxReasoningEffort,
@@ -27,6 +30,7 @@ import {
   type ChatSoundPreference,
   type ClaudeModelOptions,
   type CodexModelOptions,
+  type CursorModelOptions,
   type DefaultProviderPreference,
   type EditorPreset,
   type HermesModelOptions,
@@ -57,6 +61,7 @@ interface AppSettingsFile {
     codex?: Partial<ProviderPreference<Partial<CodexModelOptions>>> & { effort?: unknown }
     hermes?: Partial<ProviderPreference<Partial<HermesModelOptions>>>
     opencode?: Partial<ProviderPreference<Partial<OpenCodeModelOptions>>>
+    cursor?: Partial<ProviderPreference<Partial<CursorModelOptions>>>
   }
 }
 
@@ -130,6 +135,11 @@ function createDefaultProviderDefaults(): ChatProviderPreferences {
       modelOptions: { ...DEFAULT_OPENCODE_MODEL_OPTIONS },
       planMode: false,
     },
+    cursor: {
+      model: DEFAULT_CURSOR_MODEL,
+      modelOptions: { ...DEFAULT_CURSOR_MODEL_OPTIONS },
+      planMode: false,
+    },
   }
 }
 
@@ -169,7 +179,7 @@ function normalizeChatSoundId(value: unknown): ChatSoundId {
 }
 
 function normalizeDefaultProvider(value: unknown): DefaultProviderPreference {
-  return value === "claude" || value === "codex" || value === "hermes" || value === "opencode" || value === "last_used" ? value : "last_used"
+  return value === "claude" || value === "codex" || value === "hermes" || value === "opencode" || value === "cursor" || value === "last_used" ? value : "last_used"
 }
 
 function normalizeEditorPreset(value: unknown): EditorPreset {
@@ -252,6 +262,17 @@ function normalizeOpenCodePreference(value?: {
   }
 }
 
+function normalizeCursorPreference(value?: {
+  model?: unknown
+  planMode?: unknown
+}): ProviderPreference<CursorModelOptions> {
+  return {
+    model: normalizeCursorModelId(typeof value?.model === "string" ? value.model : undefined),
+    modelOptions: { ...DEFAULT_CURSOR_MODEL_OPTIONS },
+    planMode: value?.planMode === true,
+  }
+}
+
 function normalizeProviderDefaults(value: AppSettingsFile["providerDefaults"] | undefined): ChatProviderPreferences {
   const defaults = createDefaultProviderDefaults()
   return {
@@ -259,6 +280,7 @@ function normalizeProviderDefaults(value: AppSettingsFile["providerDefaults"] | 
     codex: normalizeCodexPreference(value?.codex ?? defaults.codex),
     hermes: normalizeHermesPreference(value?.hermes ?? defaults.hermes),
     opencode: normalizeOpenCodePreference(value?.opencode ?? defaults.opencode),
+    cursor: normalizeCursorPreference(value?.cursor ?? defaults.cursor),
   }
 }
 
@@ -416,6 +438,14 @@ function applyPatch(state: AppSettingsState, patch: AppSettingsPatch): AppSettin
         modelOptions: {
           ...state.providerDefaults.opencode.modelOptions,
           ...patch.providerDefaults?.opencode?.modelOptions,
+        },
+      },
+      cursor: {
+        ...state.providerDefaults.cursor,
+        ...patch.providerDefaults?.cursor,
+        modelOptions: {
+          ...state.providerDefaults.cursor.modelOptions,
+          ...patch.providerDefaults?.cursor?.modelOptions,
         },
       },
     },

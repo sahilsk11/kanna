@@ -62,6 +62,11 @@ function expectedSettingsSnapshot(filePath: string, overrides: Partial<AppSettin
         modelOptions: {},
         planMode: false,
       },
+      cursor: {
+        model: "cursor-configured-default",
+        modelOptions: {},
+        planMode: false,
+      },
     },
     warning: null,
     filePathDisplay: filePath,
@@ -197,5 +202,29 @@ describe("AppSettingsManager", () => {
       planMode: true,
     })
     expect(snapshot.providerDefaults.codex).toEqual(expectedSettingsSnapshot(filePath).providerDefaults.codex)
+  })
+
+  test("normalizes Cursor provider defaults and default provider", async () => {
+    const filePath = await createTempFilePath()
+    await writeFile(filePath, JSON.stringify({
+      defaultProvider: "cursor",
+      providerDefaults: {
+        cursor: {
+          model: "auto",
+          modelOptions: { reasoningEffort: "xhigh", fastMode: true },
+          planMode: true,
+        },
+      },
+    }), "utf8")
+
+    const snapshot = await readAppSettingsSnapshot(filePath)
+
+    expect(snapshot.defaultProvider).toBe("cursor")
+    expect(snapshot.providerDefaults.cursor).toEqual({
+      model: "auto",
+      modelOptions: {},
+      planMode: true,
+    })
+    expect(snapshot.providerDefaults.opencode).toEqual(expectedSettingsSnapshot(filePath).providerDefaults.opencode)
   })
 })
