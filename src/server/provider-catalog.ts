@@ -4,7 +4,6 @@ import type {
   ClaudeModelOptions,
   CodexModelOptions,
   ClaudeContextWindow,
-  CursorModelOptions,
   HermesModelOptions,
   ModelOptions,
   OpenCodeModelOptions,
@@ -15,13 +14,10 @@ import type {
 import {
   DEFAULT_CLAUDE_MODEL_OPTIONS,
   DEFAULT_CODEX_MODEL_OPTIONS,
-  DEFAULT_CURSOR_MODEL,
-  DEFAULT_CURSOR_MODEL_OPTIONS,
   DEFAULT_HERMES_MODEL_OPTIONS,
   DEFAULT_OPENCODE_MODEL_OPTIONS,
   PROVIDERS,
   normalizeClaudeContextWindow,
-  normalizeCursorModelId,
   normalizeOpenCodeModelId,
   normalizeProviderModelId,
   isClaudeReasoningEffort,
@@ -34,24 +30,9 @@ const HARD_CODED_CODEX_MODELS: ProviderModelOption[] = [
   { id: "gpt-5.3-codex", label: "GPT-5.3 Codex", supportsEffort: false },
   { id: "gpt-5.3-codex-spark", label: "GPT-5.3 Codex Spark", supportsEffort: false },
 ]
-const FALLBACK_CURSOR_MODELS: ProviderModelOption[] = [
-  { id: "auto", label: "Auto", supportsEffort: false },
-  { id: "composer-2.5-fast", label: "Composer 2.5 Fast", supportsEffort: false },
-  { id: "composer-2.5", label: "Composer 2.5", supportsEffort: false },
-]
 const DEFAULT_OPENCODE_MODEL_PROVIDERS = ["opencode-go"] as const
 
-function getDefaultCursorModel(cursorModels?: ProviderModelOption[]) {
-  return cursorModels?.find((model) => model.label.toLowerCase().includes("(default)"))?.id
-    ?? cursorModels?.find((model) => model.id === "auto")?.id
-    ?? cursorModels?.find((model) => model.id === "composer-2.5-fast")?.id
-    ?? cursorModels?.find((model) => model.label.toLowerCase().includes("(current)"))?.id
-    ?? cursorModels?.find((model) => model.id === "composer-2.5")?.id
-    ?? cursorModels?.[0]?.id
-    ?? DEFAULT_CURSOR_MODEL
-}
-
-function buildServerProviders(openCodeModels?: ProviderModelOption[], cursorModels?: ProviderModelOption[]): ProviderCatalogEntry[] {
+function buildServerProviders(openCodeModels?: ProviderModelOption[]): ProviderCatalogEntry[] {
   return PROVIDERS.map((provider) => {
     if (provider.id === "codex") {
       return {
@@ -65,14 +46,6 @@ function buildServerProviders(openCodeModels?: ProviderModelOption[], cursorMode
         ...provider,
         defaultModel: openCodeModels[0].id,
         models: openCodeModels,
-      }
-    }
-    if (provider.id === "cursor") {
-      const models = cursorModels?.length ? cursorModels : FALLBACK_CURSOR_MODELS
-      return {
-        ...provider,
-        defaultModel: getDefaultCursorModel(models),
-        models,
       }
     }
     return provider
@@ -148,31 +121,6 @@ async function runOpenCodeModelsCommand(command: string, args: string[], timeout
   })
 }
 
-export function parseCursorModelsOutput(output: string): ProviderModelOption[] {
-  const seen = new Set<string>()
-  const models: ProviderModelOption[] = []
-
-  for (const line of output.split(/\r?\n/)) {
-    const cleanLine = line.replace(/\x1b\[[0-9;]*m/g, "").trim()
-    const match = /^([^\s]+)\s+-\s+(.+)$/.exec(cleanLine)
-    if (!match) continue
-    const [, id, label] = match
-    if (!id || !label || seen.has(id)) continue
-    seen.add(id)
-    models.push({
-      id,
-      label,
-      supportsEffort: false,
-    })
-  }
-
-  return models
-}
-
-async function runCursorModelsCommand(command: string, args: string[], timeoutMs: number): Promise<string> {
-  return runOpenCodeModelsCommand(command, args, timeoutMs)
-}
-
 export async function discoverOpenCodeModels(options?: {
   command?: string
   timeoutMs?: number
@@ -186,37 +134,16 @@ export async function discoverOpenCodeModels(options?: {
   return parseOpenCodeModelsOutput(output, providerIds)
 }
 
-export async function discoverCursorModels(options?: {
-  command?: string
-  timeoutMs?: number
-}): Promise<ProviderModelOption[]> {
-  const command = options?.command ?? "agent"
-  const timeoutMs = options?.timeoutMs ?? 5_000
-  const output = await runCursorModelsCommand(command, ["models"], timeoutMs)
-  const models = parseCursorModelsOutput(output)
-
-  return models.length ? models : FALLBACK_CURSOR_MODELS
-}
-
 export async function refreshServerProviderCatalog(options?: {
   discoverOpenCodeModels?: () => Promise<ProviderModelOption[]>
-  discoverCursorModels?: () => Promise<ProviderModelOption[]>
 }): Promise<ProviderCatalogEntry[]> {
-  let openCodeModels: ProviderModelOption[] | undefined
-  let cursorModels: ProviderModelOption[] | undefined
-
   try {
-    openCodeModels = await (options?.discoverOpenCodeModels ?? discoverOpenCodeModels)()
+    const openCodeModels = await (options?.discoverOpenCodeModels ?? discoverOpenCodeModels)()
+    SERVER_PROVIDERS = buildServerProviders(openCodeModels)
   } catch (error) {
     console.warn(`Unable to discover OpenCode models: ${error instanceof Error ? error.message : String(error)}`)
+    SERVER_PROVIDERS = buildServerProviders()
   }
-  try {
-    cursorModels = await (options?.discoverCursorModels ?? discoverCursorModels)()
-  } catch (error) {
-    console.warn(`Unable to discover Cursor models: ${error instanceof Error ? error.message : String(error)}`)
-    cursorModels = FALLBACK_CURSOR_MODELS
-  }
-  SERVER_PROVIDERS = buildServerProviders(openCodeModels, cursorModels)
   return SERVER_PROVIDERS
 }
 
@@ -232,8 +159,6 @@ export function normalizeServerModel(provider: AgentProvider, model?: string): s
   const catalog = getServerProviderCatalog(provider)
   const normalizedModel = provider === "opencode"
     ? normalizeOpenCodeModelId(model, catalog.defaultModel)
-    : provider === "cursor"
-      ? normalizeCursorModelId(model, catalog.defaultModel)
     : normalizeProviderModelId(provider, model, catalog.defaultModel)
   if (catalog.models.some((candidate) => candidate.id === normalizedModel)) {
     return normalizedModel
@@ -277,10 +202,6 @@ export function normalizeHermesModelOptions(): HermesModelOptions {
 
 export function normalizeOpenCodeModelOptions(): OpenCodeModelOptions {
   return { ...DEFAULT_OPENCODE_MODEL_OPTIONS }
-}
-
-export function normalizeCursorModelOptions(): CursorModelOptions {
-  return { ...DEFAULT_CURSOR_MODEL_OPTIONS }
 }
 
 export function codexServiceTierFromModelOptions(modelOptions: CodexModelOptions): ServiceTier | undefined {

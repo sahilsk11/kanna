@@ -1883,31 +1883,6 @@ export function SettingsPage() {
                     </SettingsRow>
 
                     <SettingsRow
-                      title="Cursor Defaults"
-                      description="Saved defaults when using Cursor."
-                      alignStart
-                    >
-                      <div className="max-w-[420px]">
-                        <ChatPreferenceControls
-                          availableProviders={providerCatalog}
-                          selectedProvider="cursor"
-                          showProviderPicker={false}
-                          providerLocked
-                          model={providerDefaults.cursor.model}
-                          modelOptions={providerDefaults.cursor.modelOptions}
-                          onModelChange={(_, model) => {
-                            handleProviderDefaultModelChange("cursor", model)
-                          }}
-                          onModelOptionChange={() => {}}
-                          planMode={providerDefaults.cursor.planMode}
-                          onPlanModeChange={(planMode) => handleProviderDefaultPlanModeChange("cursor", planMode)}
-                          includePlanMode
-                          className="justify-start flex-wrap"
-                        />
-                      </div>
-                    </SettingsRow>
-
-                    <SettingsRow
                       title="Quick Response SDK"
                       description={llmValidationDescription}
                       alignStart

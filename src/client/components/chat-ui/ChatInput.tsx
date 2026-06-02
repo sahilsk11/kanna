@@ -211,13 +211,6 @@ function getEffectiveComposerState(
         modelOptions: { ...providerDefaults.opencode.modelOptions },
         planMode: composerState.planMode,
       }
-    case "cursor":
-      return {
-        provider: "cursor",
-        model: providerDefaults.cursor.model,
-        modelOptions: { ...providerDefaults.cursor.modelOptions },
-        planMode: composerState.planMode,
-      }
   }
 }
 
@@ -622,8 +615,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       modelOptions = { codex: { ...providerPrefs.modelOptions } }
     } else if (providerPrefs.provider === "opencode") {
       modelOptions = { opencode: { ...providerPrefs.modelOptions } }
-    } else if (providerPrefs.provider === "cursor") {
-      modelOptions = { cursor: { ...providerPrefs.modelOptions } }
     } else {
       modelOptions = { hermes: { ...providerPrefs.modelOptions } }
     }

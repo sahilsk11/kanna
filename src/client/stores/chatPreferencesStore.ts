@@ -2,8 +2,6 @@ import { create } from "zustand"
 import {
   DEFAULT_CLAUDE_MODEL_OPTIONS,
   DEFAULT_CODEX_MODEL_OPTIONS,
-  DEFAULT_CURSOR_MODEL,
-  DEFAULT_CURSOR_MODEL_OPTIONS,
   DEFAULT_HERMES_MODEL,
   DEFAULT_HERMES_MODEL_OPTIONS,
   DEFAULT_OPENCODE_MODEL,
@@ -11,7 +9,6 @@ import {
   normalizeClaudeContextWindow,
   normalizeClaudeModelId,
   normalizeCodexModelId,
-  normalizeCursorModelId,
   normalizeHermesModelId,
   normalizeOpenCodeModelId,
   isClaudeReasoningEffort,
@@ -21,7 +18,6 @@ import {
   type ChatProviderPreferences,
   type ClaudeModelOptions,
   type CodexModelOptions,
-  type CursorModelOptions,
   type DefaultProviderPreference,
   type HermesModelOptions,
   type OpenCodeModelOptions,
@@ -56,12 +52,6 @@ export type ComposerState =
     modelOptions: OpenCodeModelOptions
     planMode: boolean
   }
-  | {
-    provider: "cursor"
-    model: string
-    modelOptions: CursorModelOptions
-    planMode: boolean
-  }
 
 export const NEW_CHAT_COMPOSER_ID = "__new__"
 
@@ -90,11 +80,6 @@ type LegacyPersistedChatPreferencesState = Partial<{
       modelOptions?: Partial<OpenCodeModelOptions>
       planMode?: boolean
     }
-    cursor?: {
-      model?: string
-      modelOptions?: Partial<CursorModelOptions>
-      planMode?: boolean
-    }
   }
   composerState: PersistedComposerState
   liveProvider: AgentProvider
@@ -119,11 +104,6 @@ type LegacyPersistedChatPreferencesState = Partial<{
     opencode?: {
       model?: string
       modelOptions?: Partial<OpenCodeModelOptions>
-      planMode?: boolean
-    }
-    cursor?: {
-      model?: string
-      modelOptions?: Partial<CursorModelOptions>
       planMode?: boolean
     }
   }
@@ -156,12 +136,6 @@ type PersistedComposerState =
     modelOptions?: Partial<OpenCodeModelOptions>
     planMode?: boolean
   }
-  | {
-    provider: "cursor"
-    model?: string
-    modelOptions?: Partial<CursorModelOptions>
-    planMode?: boolean
-  }
 
 type PersistedChatPreferencesState = Pick<
   ChatPreferencesState,
@@ -169,7 +143,7 @@ type PersistedChatPreferencesState = Pick<
 > & LegacyPersistedChatPreferencesState
 
 export function normalizeDefaultProvider(value?: string): DefaultProviderPreference {
-  if (value === "claude" || value === "codex" || value === "hermes" || value === "opencode" || value === "cursor") return value
+  if (value === "claude" || value === "codex" || value === "hermes" || value === "opencode") return value
   return "last_used"
 }
 
@@ -245,18 +219,6 @@ export function normalizeOpenCodePreference(value?: {
   }
 }
 
-export function normalizeCursorPreference(value?: {
-  model?: string
-  modelOptions?: Partial<CursorModelOptions>
-  planMode?: boolean
-}): ProviderPreference<CursorModelOptions> {
-  return {
-    model: normalizeCursorModelId(value?.model),
-    modelOptions: { ...DEFAULT_CURSOR_MODEL_OPTIONS },
-    planMode: Boolean(value?.planMode),
-  }
-}
-
 function forcePersistedCodexPreference<T extends {
   model?: string
   effort?: string
@@ -313,11 +275,6 @@ export function createDefaultProviderDefaults(): ChatProviderPreferences {
       modelOptions: { ...DEFAULT_OPENCODE_MODEL_OPTIONS },
       planMode: false,
     },
-    cursor: {
-      model: DEFAULT_CURSOR_MODEL,
-      modelOptions: { ...DEFAULT_CURSOR_MODEL_OPTIONS },
-      planMode: false,
-    },
   }
 }
 
@@ -344,18 +301,12 @@ export function normalizeProviderDefaults(value?: {
     modelOptions?: Partial<OpenCodeModelOptions>
     planMode?: boolean
   }
-  cursor?: {
-    model?: string
-    modelOptions?: Partial<CursorModelOptions>
-    planMode?: boolean
-  }
 }): ChatProviderPreferences {
   return {
     claude: normalizeClaudePreference(value?.claude),
     codex: normalizeCodexPreference(value?.codex),
     hermes: normalizeHermesPreference(value?.hermes),
     opencode: normalizeOpenCodePreference(value?.opencode),
-    cursor: normalizeCursorPreference(value?.cursor),
   }
 }
 
@@ -409,15 +360,6 @@ function composerFromProviderDefaults(
         planMode: preference.planMode,
       }
     }
-    case "cursor": {
-      const preference = providerDefaults.cursor
-      return {
-        provider: "cursor",
-        model: preference.model,
-        modelOptions: { ...preference.modelOptions },
-        planMode: preference.planMode,
-      }
-    }
   }
 }
 
@@ -451,13 +393,6 @@ function cloneComposerState(state: ComposerState): ComposerState {
         modelOptions: { ...state.modelOptions },
         planMode: state.planMode,
       }
-    case "cursor":
-      return {
-        provider: "cursor",
-        model: state.model,
-        modelOptions: { ...state.modelOptions },
-        planMode: state.planMode,
-      }
   }
 }
 
@@ -479,11 +414,7 @@ function sameComposerState(left: ComposerState | undefined, right: ComposerState
     return true
   }
 
-  if (left.provider === "opencode" && right.provider === "opencode") {
-    return true
-  }
-
-  return left.provider === "cursor" && right.provider === "cursor"
+  return left.provider === "opencode" && right.provider === "opencode"
 }
 
 function normalizeComposerState(
@@ -532,16 +463,6 @@ function normalizeComposerState(
     }
   }
 
-  if (value?.provider === "cursor") {
-    const preference = normalizeCursorPreference(value)
-    return {
-      provider: "cursor",
-      model: preference.model,
-      modelOptions: preference.modelOptions,
-      planMode: preference.planMode,
-    }
-  }
-
   if (legacyLiveProvider === "claude") {
     const preference = normalizeClaudePreference(legacyLivePreferences?.claude)
     return {
@@ -576,16 +497,6 @@ function normalizeComposerState(
     const preference = normalizeOpenCodePreference(legacyLivePreferences?.opencode)
     return {
       provider: "opencode",
-      model: preference.model,
-      modelOptions: preference.modelOptions,
-      planMode: preference.planMode,
-    }
-  }
-
-  if (legacyLiveProvider === "cursor") {
-    const preference = normalizeCursorPreference(legacyLivePreferences?.cursor)
-    return {
-      provider: "cursor",
       model: preference.model,
       modelOptions: preference.modelOptions,
       planMode: preference.planMode,
@@ -776,15 +687,10 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
                     ...state.providerDefaults.hermes,
                     model,
                   })
-                  : provider === "opencode"
-                    ? normalizeOpenCodePreference({
-                      ...state.providerDefaults.opencode,
-                      model,
-                    })
-                    : normalizeCursorPreference({
-                      ...state.providerDefaults.cursor,
-                      model,
-                    }),
+                  : normalizeOpenCodePreference({
+                    ...state.providerDefaults.opencode,
+                    model,
+                  }),
           },
         })),
       setProviderDefaultModelOptions: (provider, modelOptions) =>
@@ -815,21 +721,13 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
                       ...modelOptions as Partial<HermesModelOptions>,
                     },
                   })
-                  : provider === "opencode"
-                    ? normalizeOpenCodePreference({
-                      ...state.providerDefaults.opencode,
-                      modelOptions: {
-                        ...state.providerDefaults.opencode.modelOptions,
-                        ...modelOptions as Partial<OpenCodeModelOptions>,
-                      },
-                    })
-                    : normalizeCursorPreference({
-                      ...state.providerDefaults.cursor,
-                      modelOptions: {
-                        ...state.providerDefaults.cursor.modelOptions,
-                        ...modelOptions as Partial<CursorModelOptions>,
-                      },
-                    }),
+                  : normalizeOpenCodePreference({
+                    ...state.providerDefaults.opencode,
+                    modelOptions: {
+                      ...state.providerDefaults.opencode.modelOptions,
+                      ...modelOptions as Partial<OpenCodeModelOptions>,
+                    },
+                  }),
           },
         })),
       setProviderDefaultPlanMode: (provider, planMode) =>
@@ -882,14 +780,10 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
                   provider: composerState.provider,
                   model: composerState.provider === "hermes"
                     ? normalizeHermesPreference(composerState).model
-                    : composerState.provider === "opencode"
-                      ? normalizeOpenCodePreference(composerState).model
-                      : normalizeCursorPreference(composerState).model,
+                    : normalizeOpenCodePreference(composerState).model,
                   modelOptions: composerState.provider === "hermes"
                     ? normalizeHermesPreference(composerState).modelOptions
-                    : composerState.provider === "opencode"
-                      ? normalizeOpenCodePreference(composerState).modelOptions
-                      : normalizeCursorPreference(composerState).modelOptions,
+                    : normalizeOpenCodePreference(composerState).modelOptions,
                   planMode: composerState.planMode,
                 } as ComposerState,
           },
@@ -948,19 +842,6 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
                 }).modelOptions,
                 planMode: composerState.planMode,
               }
-            case "cursor":
-              return {
-                provider: "cursor",
-                model: normalizeCursorPreference({
-                  ...composerState,
-                  model,
-                }).model,
-                modelOptions: normalizeCursorPreference({
-                  ...composerState,
-                  model,
-                }).modelOptions,
-                planMode: composerState.planMode,
-              }
           }
         })),
       setChatComposerModelOptions: (chatId, modelOptions) =>
@@ -1014,19 +895,6 @@ export const useChatPreferencesStore = create<ChatPreferencesState>()(
                   modelOptions: {
                     ...composerState.modelOptions,
                     ...modelOptions as Partial<OpenCodeModelOptions>,
-                  },
-                }).modelOptions,
-                planMode: composerState.planMode,
-              }
-            case "cursor":
-              return {
-                provider: "cursor",
-                model: composerState.model,
-                modelOptions: normalizeCursorPreference({
-                  ...composerState,
-                  modelOptions: {
-                    ...composerState.modelOptions,
-                    ...modelOptions as Partial<CursorModelOptions>,
                   },
                 }).modelOptions,
                 planMode: composerState.planMode,

@@ -40,11 +40,6 @@ function settingsSnapshot(): AppSettingsSnapshot {
         modelOptions: {},
         planMode: false,
       },
-      cursor: {
-        model: "cursor-configured-default",
-        modelOptions: {},
-        planMode: false,
-      },
     },
     warning: null,
     filePathDisplay: "~/.kanna/data/settings.json",
@@ -71,6 +66,5 @@ describe("mergeAppSettingsPatch", () => {
     expect(merged.providerDefaults.codex).toEqual(settingsSnapshot().providerDefaults.codex)
     expect(merged.providerDefaults.claude).toEqual(settingsSnapshot().providerDefaults.claude)
     expect(merged.providerDefaults.opencode).toEqual(settingsSnapshot().providerDefaults.opencode)
-    expect(merged.providerDefaults.cursor).toEqual(settingsSnapshot().providerDefaults.cursor)
   })
 })
