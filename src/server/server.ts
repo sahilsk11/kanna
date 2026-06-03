@@ -14,6 +14,7 @@ import { KeybindingsManager } from "./keybindings"
 import { readLlmProviderSnapshot, validateLlmProviderCredentials, writeLlmProviderSnapshot } from "./llm-provider"
 import { getMachineDisplayName } from "./machine-name"
 import { refreshServerProviderCatalog } from "./provider-catalog"
+import { PushNotificationManager } from "./push-notifications"
 import { TerminalManager } from "./terminal-manager"
 import { UpdateManager } from "./update-manager"
 import type { UpdateInstallAttemptResult } from "./cli-runtime"
@@ -93,6 +94,8 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
   const machineDisplayName = getMachineDisplayName()
   await store.initialize()
   await diffStore.initialize()
+  const pushNotifications = new PushNotificationManager(store.dataDir, APP_NAME)
+  await pushNotifications.initialize()
   await store.migrateLegacyTranscripts(options.onMigrationProgress)
   let discoveredProjects: DiscoveredProject[] = []
 
@@ -157,6 +160,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
     getDiscoveredProjects: () => discoveredProjects,
     machineDisplayName,
     updateManager,
+    pushNotifications,
   })
   const staleEmptyChatPruneInterval = setInterval(() => {
     void router.pruneStaleEmptyChats()
@@ -227,6 +231,11 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
 
           if (url.pathname === "/health") {
             return Response.json({ ok: true, port: actualPort })
+          }
+
+          const pushResponse = await pushNotifications.handleApiRequest(req, url)
+          if (pushResponse) {
+            return pushResponse
           }
 
           const uploadResponse = await handleProjectUpload(req, url, store)

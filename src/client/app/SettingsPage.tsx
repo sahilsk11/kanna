@@ -64,6 +64,12 @@ import { KEYBINDING_ACTION_LABELS, formatKeybindingInput, getResolvedKeybindings
 import { playChatNotificationSound } from "../lib/chatSounds"
 import { formatSidebarAgeLabel } from "../lib/formatters"
 import { getSidebarChatTimestamp } from "../lib/sidebarChats"
+import {
+  disablePushNotifications,
+  enablePushNotifications,
+  getPushNotificationStatus,
+  type PushNotificationStatus,
+} from "../lib/pushNotifications"
 import { cn } from "../lib/utils"
 import {
   DEFAULT_TERMINAL_MIN_COLUMN_WIDTH,
@@ -955,6 +961,8 @@ export function SettingsPage() {
   const [keybindingDrafts, setKeybindingDrafts] = useState<Record<string, string>>({})
   const [keybindingsError, setKeybindingsError] = useState<string | null>(null)
   const [appSettingsError, setAppSettingsError] = useState<string | null>(null)
+  const [pushNotificationStatus, setPushNotificationStatus] = useState<PushNotificationStatus>("unsupported")
+  const [pushNotificationBusy, setPushNotificationBusy] = useState(false)
   const [analyticsDialogOpen, setAnalyticsDialogOpen] = useState(false)
   const [llmProviderDraft, setLlmProviderDraft] = useState({
     provider: "openai" as LlmProviderKind,
@@ -1026,6 +1034,20 @@ export function SettingsPage() {
     if (resolveSettingsSectionId(sectionId)) return
     navigate("/settings/general", { replace: true })
   }, [navigate, sectionId])
+
+  useEffect(() => {
+    let cancelled = false
+    void getPushNotificationStatus()
+      .then((status) => {
+        if (!cancelled) setPushNotificationStatus(status)
+      })
+      .catch(() => {
+        if (!cancelled) setPushNotificationStatus("unsupported")
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -1175,6 +1197,34 @@ export function SettingsPage() {
       setAppSettingsError(error instanceof Error ? error.message : "Unable to save chat sound settings.")
     })
     void playChatNotificationSound(nextValue, 1).catch(() => undefined)
+  }
+
+  async function handleEnablePushNotifications() {
+    setPushNotificationBusy(true)
+    setAppSettingsError(null)
+    try {
+      await enablePushNotifications()
+      setPushNotificationStatus(await getPushNotificationStatus())
+    } catch (error) {
+      setAppSettingsError(error instanceof Error ? error.message : "Unable to enable notifications.")
+      setPushNotificationStatus(await getPushNotificationStatus().catch((): PushNotificationStatus => "unsupported"))
+    } finally {
+      setPushNotificationBusy(false)
+    }
+  }
+
+  async function handleDisablePushNotifications() {
+    setPushNotificationBusy(true)
+    setAppSettingsError(null)
+    try {
+      await disablePushNotifications()
+      setPushNotificationStatus(await getPushNotificationStatus())
+    } catch (error) {
+      setAppSettingsError(error instanceof Error ? error.message : "Unable to disable notifications.")
+      setPushNotificationStatus(await getPushNotificationStatus().catch((): PushNotificationStatus => "unsupported"))
+    } finally {
+      setPushNotificationBusy(false)
+    }
   }
 
   async function handleAnalyticsPreferenceChange(nextValue: "enabled" | "disabled") {
@@ -1605,6 +1655,38 @@ export function SettingsPage() {
                             </SelectGroup>
                           </SelectContent>
                         </Select>
+                      </SettingsRow>
+
+                      <SettingsRow
+                        title="Push Notifications"
+                        description="Show system notifications when a session finishes or needs attention"
+                      >
+                        {pushNotificationStatus === "unsupported" ? (
+                          <span className="text-sm text-muted-foreground">Unavailable</span>
+                        ) : pushNotificationStatus === "denied" ? (
+                          <span className="text-sm text-muted-foreground">Blocked</span>
+                        ) : pushNotificationStatus === "enabled" ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => { void handleDisablePushNotifications() }}
+                            disabled={pushNotificationBusy}
+                          >
+                            {pushNotificationBusy ? <Loader2 className="size-4 animate-spin" /> : null}
+                            Disable
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            onClick={() => { void handleEnablePushNotifications() }}
+                            disabled={pushNotificationBusy}
+                          >
+                            {pushNotificationBusy ? <Loader2 className="size-4 animate-spin" /> : null}
+                            Enable
+                          </Button>
+                        )}
                       </SettingsRow>
 
                       <SettingsRow
