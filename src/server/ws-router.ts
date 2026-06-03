@@ -560,6 +560,11 @@ export function createWsRouter({
         modelOptions: {},
         planMode: false,
       },
+      cursor: {
+        model: "cursor-configured-default",
+        modelOptions: {},
+        planMode: false,
+      },
     },
     warning: null,
     filePathDisplay: "~/.kanna/data/settings.json",
@@ -606,6 +611,14 @@ export function createWsRouter({
         modelOptions: {
           ...snapshot.providerDefaults.opencode.modelOptions,
           ...patch.providerDefaults?.opencode?.modelOptions,
+        },
+      },
+      cursor: {
+        ...snapshot.providerDefaults.cursor,
+        ...patch.providerDefaults?.cursor,
+        modelOptions: {
+          ...snapshot.providerDefaults.cursor.modelOptions,
+          ...patch.providerDefaults?.cursor?.modelOptions,
         },
       },
     },

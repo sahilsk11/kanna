@@ -266,7 +266,14 @@ function readLegacyBrowserSettingsPatch(): AppSettingsPatch | null {
   }
 
   const chatPreferencesState = readPersistedZustandState(LEGACY_CHAT_PREFERENCES_STORAGE_KEY)
-  if (chatPreferencesState?.defaultProvider === "last_used" || chatPreferencesState?.defaultProvider === "claude" || chatPreferencesState?.defaultProvider === "codex") {
+  if (
+    chatPreferencesState?.defaultProvider === "last_used"
+    || chatPreferencesState?.defaultProvider === "claude"
+    || chatPreferencesState?.defaultProvider === "codex"
+    || chatPreferencesState?.defaultProvider === "hermes"
+    || chatPreferencesState?.defaultProvider === "opencode"
+    || chatPreferencesState?.defaultProvider === "cursor"
+  ) {
     patch.defaultProvider = chatPreferencesState.defaultProvider
   }
   if (chatPreferencesState?.providerDefaults && typeof chatPreferencesState.providerDefaults === "object") {
@@ -493,6 +500,33 @@ function composerStateFromSendOptions(options?: {
         reasoningEffort: options.modelOptions.codex.reasoningEffort ?? "high",
         fastMode: options.modelOptions.codex.fastMode ?? false,
       },
+      planMode: Boolean(options.planMode),
+    }
+  }
+
+  if (options?.provider === "hermes" && options.model && options.modelOptions?.hermes) {
+    return {
+      provider: "hermes",
+      model: options.model,
+      modelOptions: {},
+      planMode: Boolean(options.planMode),
+    }
+  }
+
+  if (options?.provider === "opencode" && options.model && options.modelOptions?.opencode) {
+    return {
+      provider: "opencode",
+      model: options.model,
+      modelOptions: {},
+      planMode: Boolean(options.planMode),
+    }
+  }
+
+  if (options?.provider === "cursor" && options.model && options.modelOptions?.cursor) {
+    return {
+      provider: "cursor",
+      model: options.model,
+      modelOptions: {},
       planMode: Boolean(options.planMode),
     }
   }

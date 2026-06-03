@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import {
+  DEFAULT_CURSOR_MODEL,
   DEFAULT_HERMES_MODEL,
   DEFAULT_OPENCODE_MODEL,
   normalizeClaudeModelId,
   normalizeCodexModelId,
+  normalizeCursorModelId,
   normalizeHermesModelId,
   normalizeOpenCodeModelId,
   supportsClaudeMaxReasoningEffort,
@@ -31,6 +33,13 @@ describe("shared model normalization", () => {
     expect(normalizeOpenCodeModelId()).toBe(DEFAULT_OPENCODE_MODEL)
     expect(normalizeOpenCodeModelId("default")).toBe(DEFAULT_OPENCODE_MODEL)
     expect(normalizeOpenCodeModelId("opencode/kimi-k2.5")).toBe("opencode/kimi-k2.5")
+  })
+
+  test("normalizes Cursor defaults while preserving model ids from discovery", () => {
+    expect(normalizeCursorModelId()).toBe(DEFAULT_CURSOR_MODEL)
+    expect(normalizeCursorModelId("default")).toBe(DEFAULT_CURSOR_MODEL)
+    expect(normalizeCursorModelId("auto")).toBe("auto")
+    expect(normalizeCursorModelId("composer-2.5-fast")).toBe("composer-2.5-fast")
   })
 
   test("uses declarative metadata for Claude max-effort support", () => {
