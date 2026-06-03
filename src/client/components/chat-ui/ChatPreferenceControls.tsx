@@ -10,7 +10,6 @@ import {
   type ClaudeReasoningEffort,
   type CodexModelOptions,
   type CodexReasoningEffort,
-  type CursorModelOptions,
   type HermesModelOptions,
   type OpenCodeModelOptions,
   type ProviderCatalogEntry,
@@ -50,23 +49,11 @@ function OpenAIIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
   )
 }
 
-function CursorIcon({ className }: SVGProps<SVGSVGElement>) {
-  return (
-    <img
-      src="/provider-icons/cursor-ai.png"
-      alt=""
-      aria-hidden="true"
-      className={cn("shrink-0 object-contain", className)}
-    />
-  )
-}
-
 export const PROVIDER_ICONS: Record<AgentProvider, IconComponent> = {
   claude: AnthropicIcon,
   codex: OpenAIIcon,
   hermes: Box,
   opencode: SquareMenu,
-  cursor: CursorIcon,
 }
 
 export function PopoverMenuItem({
@@ -259,7 +246,7 @@ interface ChatPreferenceControlsProps {
   providerLocked?: boolean
   showCodexCliRequirementHints?: boolean
   model: string
-  modelOptions: ClaudeModelOptions | CodexModelOptions | HermesModelOptions | OpenCodeModelOptions | CursorModelOptions
+  modelOptions: ClaudeModelOptions | CodexModelOptions | HermesModelOptions | OpenCodeModelOptions
   onProviderChange?: (provider: AgentProvider) => void
   onModelChange: (provider: AgentProvider, model: string) => void
   onModelOptionChange: (change: ModelOptionChange) => void

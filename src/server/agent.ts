@@ -19,7 +19,6 @@ import type { AnalyticsReporter } from "./analytics"
 import { NoopAnalyticsReporter } from "./analytics"
 import { AsyncQueue } from "./async-queue"
 import { CodexAppServerManager } from "./codex-app-server"
-import { CursorManager } from "./cursor-manager"
 import { type GenerateChatTitleResult, generateTitleForChatDetailed } from "./generate-title"
 import type { HarnessEvent, HarnessToolRequest, HarnessTurn } from "./harness-types"
 import { HermesAcpManager } from "./hermes-acp"
@@ -110,7 +109,6 @@ interface AgentCoordinatorArgs {
   onStateChange: (chatId?: string, options?: { immediate?: boolean }) => void
   analytics?: AnalyticsReporter
   codexManager?: CodexAppServerManager
-  cursorManager?: CursorManager
   hermesManager?: HermesAcpManager
   opencodeManager?: OpenCodeServerManager
   generateTitle?: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
@@ -645,7 +643,6 @@ export class AgentCoordinator {
   private readonly onStateChange: (chatId?: string, options?: { immediate?: boolean }) => void
   private readonly analytics: AnalyticsReporter
   private readonly codexManager: CodexAppServerManager
-  private readonly cursorManager: CursorManager
   private readonly hermesManager: HermesAcpManager
   private readonly opencodeManager: OpenCodeServerManager
   private readonly generateTitle: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
@@ -660,7 +657,6 @@ export class AgentCoordinator {
     this.onStateChange = args.onStateChange
     this.analytics = args.analytics ?? NoopAnalyticsReporter
     this.codexManager = args.codexManager ?? new CodexAppServerManager()
-    this.cursorManager = args.cursorManager ?? new CursorManager()
     this.hermesManager = args.hermesManager ?? new HermesAcpManager()
     this.opencodeManager = args.opencodeManager ?? new OpenCodeServerManager()
     this.generateTitle = args.generateTitle ?? generateTitleForChatDetailed
@@ -726,7 +722,6 @@ export class AgentCoordinator {
     }
     this.hermesManager.stopSession(chatId)
     this.opencodeManager.stopSession(chatId)
-    this.cursorManager.stopSession(chatId)
     this.emitStateChange(chatId)
   }
 
@@ -744,7 +739,6 @@ export class AgentCoordinator {
     this.codexManager.stopAll()
     this.hermesManager.stopAll()
     this.opencodeManager.stopAll()
-    this.cursorManager.stopAll()
     this.emitStateChange()
   }
 
@@ -781,15 +775,6 @@ export class AgentCoordinator {
         effort: undefined,
         serviceTier: undefined,
         planMode: false,
-      }
-    }
-
-    if (provider === "cursor") {
-      return {
-        model: normalizeServerModel(provider, options.model),
-        effort: undefined,
-        serviceTier: undefined,
-        planMode: catalog.supportsPlanMode ? Boolean(options.planMode) : false,
       }
     }
 
@@ -996,37 +981,6 @@ export class AgentCoordinator {
         serviceTier: args.serviceTier,
         planMode: args.planMode,
         onToolRequest,
-      })
-      logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
-    } else if (args.provider === "cursor") {
-      logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
-      const sessionToken = await this.cursorManager.startSession({
-        chatId: args.chatId,
-        cwd: project.localPath,
-        sessionToken: chat.sessionToken,
-        pendingForkSessionToken: chat.pendingForkSessionToken,
-      })
-      if (chat.pendingForkSessionToken && sessionToken) {
-        await this.store.setPendingForkSessionToken(args.chatId, null)
-      }
-      logSendToStartingProfile(args.profile, "start_turn.session_ready", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
-      turn = await this.cursorManager.startTurn({
-        chatId: args.chatId,
-        content: buildPromptText(args.content, args.attachments),
-        model: args.model,
-        planMode: args.planMode,
       })
       logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
         chatId: args.chatId,
@@ -1324,8 +1278,8 @@ export class AgentCoordinator {
     if (!chat.provider) {
       throw new Error("Chat must have a provider before forking")
     }
-    if (chat.provider === "opencode" || chat.provider === "cursor") {
-      throw new Error(`${chat.provider === "opencode" ? "OpenCode" : "Cursor"} chats cannot be forked yet`)
+    if (chat.provider === "opencode") {
+      throw new Error("OpenCode chats cannot be forked yet")
     }
     if (!chat.sessionToken && !chat.pendingForkSessionToken) {
       throw new Error("Chat has no session to fork")

@@ -72,29 +72,4 @@ describe("ChatPreferenceControls", () => {
     expect(html).not.toContain("Max")
     expect(html).not.toContain("1M")
   })
-
-  test("renders Cursor with plan mode but without provider-specific option controls", () => {
-    const html = renderToStaticMarkup(
-      <ChatPreferenceControls
-        availableProviders={PROVIDERS}
-        selectedProvider="cursor"
-        model="cursor-configured-default"
-        modelOptions={{}}
-        onProviderChange={() => {}}
-        onModelChange={() => {}}
-        onModelOptionChange={() => {}}
-        planMode
-        onPlanModeChange={() => {}}
-        includePlanMode
-      />
-    )
-
-    expect(html).toContain("Cursor")
-    expect(html).toContain("Configured Default / Auto")
-    expect(html).toContain("Plan Mode")
-    expect(html).not.toContain("Fast Mode")
-    expect(html).not.toContain("Full Access")
-    expect(html).not.toContain("Max")
-    expect(html).not.toContain("1M")
-  })
 })

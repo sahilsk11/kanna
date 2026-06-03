@@ -1,7 +1,7 @@
 export const STORE_VERSION = 2 as const
 export const PROTOCOL_VERSION = 1 as const
 
-export type AgentProvider = "claude" | "codex" | "hermes" | "opencode" | "cursor"
+export type AgentProvider = "claude" | "codex" | "hermes" | "opencode"
 export type LlmProviderKind = "openai" | "openrouter" | "custom"
 export type AppThemePreference = "light" | "dark" | "system"
 export type SessionGroupingPreference = "default" | "tasks"
@@ -13,7 +13,6 @@ export const DEFAULT_OPENAI_SDK_MODEL = "gpt-5.4-mini"
 export const DEFAULT_OPENROUTER_SDK_MODEL = "moonshotai/kimi-k2.5:nitro"
 export const DEFAULT_HERMES_MODEL = "hermes-configured-default"
 export const DEFAULT_OPENCODE_MODEL = "opencode-configured-default"
-export const DEFAULT_CURSOR_MODEL = "cursor-configured-default"
 
 export type AttachmentKind = "image" | "file"
 export type StandaloneTranscriptAttachmentMode = "metadata" | "bundle"
@@ -196,14 +195,12 @@ export interface CodexModelOptions {
 
 export interface HermesModelOptions {}
 export interface OpenCodeModelOptions {}
-export interface CursorModelOptions {}
 
 export interface ProviderModelOptionsByProvider {
   claude: ClaudeModelOptions
   codex: CodexModelOptions
   hermes: HermesModelOptions
   opencode: OpenCodeModelOptions
-  cursor: CursorModelOptions
 }
 
 export interface ProviderPreference<TModelOptions> {
@@ -217,7 +214,6 @@ export type ChatProviderPreferences = {
   codex: ProviderPreference<CodexModelOptions>
   hermes: ProviderPreference<HermesModelOptions>
   opencode: ProviderPreference<OpenCodeModelOptions>
-  cursor: ProviderPreference<CursorModelOptions>
 }
 
 export type ModelOptions = Partial<{
@@ -236,7 +232,6 @@ export const DEFAULT_CODEX_MODEL_OPTIONS = {
 
 export const DEFAULT_HERMES_MODEL_OPTIONS = {} as const satisfies HermesModelOptions
 export const DEFAULT_OPENCODE_MODEL_OPTIONS = {} as const satisfies OpenCodeModelOptions
-export const DEFAULT_CURSOR_MODEL_OPTIONS = {} as const satisfies CursorModelOptions
 
 export function isClaudeReasoningEffort(value: unknown): value is ClaudeReasoningEffort {
   return CLAUDE_REASONING_OPTIONS.some((option) => option.id === value)
@@ -330,16 +325,6 @@ export const PROVIDERS: ProviderCatalogEntry[] = [
     ],
     efforts: [],
   },
-  {
-    id: "cursor",
-    label: "Cursor",
-    defaultModel: DEFAULT_CURSOR_MODEL,
-    supportsPlanMode: true,
-    models: [
-      { id: DEFAULT_CURSOR_MODEL, label: "Configured Default / Auto", supportsEffort: false, aliases: ["default", "auto"] },
-    ],
-    efforts: [],
-  },
 ]
 
 export function getProviderCatalog(provider: AgentProvider): ProviderCatalogEntry {
@@ -384,17 +369,6 @@ export function normalizeOpenCodeModelId(modelId?: string, fallbackModelId = DEF
   const trimmedModelId = typeof modelId === "string" ? modelId.trim() : ""
   if (!trimmedModelId || trimmedModelId === "default" || trimmedModelId === DEFAULT_OPENCODE_MODEL) {
     return fallbackModelId
-  }
-  return trimmedModelId
-}
-
-export function normalizeCursorModelId(modelId?: string, fallbackModelId = DEFAULT_CURSOR_MODEL): string {
-  const trimmedModelId = typeof modelId === "string" ? modelId.trim() : ""
-  if (!trimmedModelId || trimmedModelId === "default" || trimmedModelId === DEFAULT_CURSOR_MODEL) {
-    return fallbackModelId
-  }
-  if (trimmedModelId === "auto") {
-    return trimmedModelId
   }
   return trimmedModelId
 }
@@ -554,7 +528,6 @@ export interface AppSettingsPatch {
     codex?: Partial<ProviderPreference<CodexModelOptions>>
     hermes?: Partial<ProviderPreference<HermesModelOptions>>
     opencode?: Partial<ProviderPreference<OpenCodeModelOptions>>
-    cursor?: Partial<ProviderPreference<CursorModelOptions>>
   }
 }
 
