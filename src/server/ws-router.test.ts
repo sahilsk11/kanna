@@ -115,6 +115,11 @@ const DEFAULT_APP_SETTINGS_SNAPSHOT: AppSettingsSnapshot = {
       modelOptions: {},
       planMode: false,
     },
+    cursor: {
+      model: "cursor-configured-default",
+      modelOptions: {},
+      planMode: false,
+    },
   },
   availableProviders: SERVER_PROVIDERS,
   warning: null,

@@ -77,6 +77,11 @@ describe("migrateChatPreferencesState", () => {
           modelOptions: {},
           planMode: false,
         },
+        cursor: {
+          model: "cursor-configured-default",
+          modelOptions: {},
+          planMode: false,
+        },
       },
       chatStates: {},
       legacyComposerState: {
@@ -219,6 +224,40 @@ describe("migrateChatPreferencesState", () => {
       planMode: false,
     })
   })
+
+  test("normalizes Cursor defaults and composer state without model options", () => {
+    const migrated = migrateChatPreferencesState({
+      defaultProvider: "cursor",
+      providerDefaults: {
+        cursor: {
+          model: "auto",
+          modelOptions: { reasoningEffort: "xhigh", fastMode: true },
+          planMode: true,
+        },
+      },
+      chatStates: {
+        chatA: {
+          provider: "cursor",
+          model: "default",
+          modelOptions: { fastMode: true },
+          planMode: false,
+        },
+      },
+    })
+
+    expect(migrated.defaultProvider).toBe("cursor")
+    expect(migrated.providerDefaults.cursor).toEqual({
+      model: "auto",
+      modelOptions: {},
+      planMode: true,
+    })
+    expect(migrated.chatStates.chatA).toEqual({
+      provider: "cursor",
+      model: "cursor-configured-default",
+      modelOptions: {},
+      planMode: false,
+    })
+  })
 })
 
 describe("chat preference store", () => {
@@ -233,6 +272,14 @@ describe("chat preference store", () => {
   test("starts with Hermes configured defaults", () => {
     expect(INITIAL_STATE.providerDefaults.hermes).toEqual({
       model: "hermes-configured-default",
+      modelOptions: {},
+      planMode: false,
+    })
+  })
+
+  test("starts with Cursor configured defaults", () => {
+    expect(INITIAL_STATE.providerDefaults.cursor).toEqual({
+      model: "cursor-configured-default",
       modelOptions: {},
       planMode: false,
     })
@@ -377,6 +424,30 @@ describe("chat preference store", () => {
     expect(useChatPreferencesStore.getState().getComposerState("chat-a")).toEqual({
       provider: "hermes",
       model: "hermes-configured-default",
+      modelOptions: {},
+      planMode: true,
+    })
+  })
+
+  test("initializeComposerForChat can use Cursor as the explicit default provider", () => {
+    useChatPreferencesStore.setState({
+      ...INITIAL_STATE,
+      defaultProvider: "cursor",
+      providerDefaults: {
+        ...INITIAL_STATE.providerDefaults,
+        cursor: {
+          model: "cursor-configured-default",
+          modelOptions: {},
+          planMode: true,
+        },
+      },
+    })
+
+    useChatPreferencesStore.getState().initializeComposerForChat("chat-a")
+
+    expect(useChatPreferencesStore.getState().getComposerState("chat-a")).toEqual({
+      provider: "cursor",
+      model: "cursor-configured-default",
       modelOptions: {},
       planMode: true,
     })
