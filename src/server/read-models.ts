@@ -11,6 +11,7 @@ import type {
 import type { ChatRecord, StoreState, TaskRecord } from "./events"
 import { resolveLocalPath } from "./paths"
 import { SERVER_PROVIDERS } from "./provider-catalog"
+import { providerCanFork } from "./provider-capabilities"
 
 const SIDEBAR_RECENT_WINDOW_MS = 24 * 60 * 60 * 1_000
 const SIDEBAR_FALLBACK_PREVIEW_LIMIT = 5
@@ -31,7 +32,7 @@ function canForkChat(
   drainingChatIds: Set<string>,
 ) {
   if (!chat.provider) return false
-  if (chat.provider === "opencode") return false
+  if (!providerCanFork(chat.provider)) return false
   if (!chat.sessionToken && !chat.pendingForkSessionToken) return false
   if (activeStatuses.has(chat.id)) return false
   if (drainingChatIds.has(chat.id)) return false
