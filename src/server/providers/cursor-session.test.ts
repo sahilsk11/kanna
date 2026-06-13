@@ -81,10 +81,11 @@ describe("cursor session helpers", () => {
 
   test("builds terminal result entries from run results", () => {
     expect(buildCursorResultEntry({
+      id: "run-1",
       status: "finished",
       durationMs: 1200,
       result: "done",
-    })).toMatchObject({
+    } as RunResult)).toMatchObject({
       kind: "result",
       subtype: "success",
       isError: false,
@@ -93,10 +94,11 @@ describe("cursor session helpers", () => {
     })
 
     expect(buildCursorResultEntry({
+      id: "run-2",
       status: "cancelled",
       durationMs: 300,
       result: "",
-    })).toMatchObject({
+    } as RunResult)).toMatchObject({
       subtype: "cancelled",
       isError: true,
     })
