@@ -164,18 +164,18 @@ describe("ChatInput", () => {
     expect(html).not.toContain('type="file" multiple="" class="hidden"')
   })
 
-  test("uses Hermes defaults for a locked Hermes chat", () => {
+  test("uses OpenCode defaults for a locked OpenCode chat", () => {
     useChatPreferencesStore.setState(useChatPreferencesStore.getInitialState())
 
     const html = renderToStaticMarkup(createElement(ChatInput, {
       onSubmit: async () => undefined,
       disabled: false,
       canCancel: false,
-      activeProvider: "hermes",
+      activeProvider: "opencode",
       availableProviders: PROVIDERS,
     }))
 
-    expect(html).toContain("Hermes")
+    expect(html).toContain("OpenCode")
     expect(html).toContain("Configured Default")
     expect(html).not.toContain("GPT-5.5")
   })

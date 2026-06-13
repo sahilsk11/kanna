@@ -43,14 +43,6 @@ export function mergeAppSettingsPatch(
           ...patch.providerDefaults?.codex?.modelOptions,
         },
       },
-      hermes: {
-        ...settings.providerDefaults.hermes,
-        ...patch.providerDefaults?.hermes,
-        modelOptions: {
-          ...settings.providerDefaults.hermes.modelOptions,
-          ...patch.providerDefaults?.hermes?.modelOptions,
-        },
-      },
       opencode: {
         ...settings.providerDefaults.opencode,
         ...patch.providerDefaults?.opencode,

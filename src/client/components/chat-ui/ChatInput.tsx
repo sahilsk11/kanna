@@ -197,13 +197,6 @@ function getEffectiveComposerState(
         modelOptions: { ...providerDefaults.codex.modelOptions },
         planMode: composerState.planMode,
       }
-    case "hermes":
-      return {
-        provider: "hermes",
-        model: providerDefaults.hermes.model,
-        modelOptions: { ...providerDefaults.hermes.modelOptions },
-        planMode: composerState.planMode,
-      }
     case "opencode":
       return {
         provider: "opencode",
@@ -613,10 +606,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       modelOptions = { claude: { ...providerPrefs.modelOptions } }
     } else if (providerPrefs.provider === "codex") {
       modelOptions = { codex: { ...providerPrefs.modelOptions } }
-    } else if (providerPrefs.provider === "opencode") {
-      modelOptions = { opencode: { ...providerPrefs.modelOptions } }
     } else {
-      modelOptions = { hermes: { ...providerPrefs.modelOptions } }
+      modelOptions = { opencode: { ...providerPrefs.modelOptions } }
     }
     const submitOptions = {
       provider: selectedProvider,

@@ -10,7 +10,6 @@ import {
   type ClaudeReasoningEffort,
   type CodexModelOptions,
   type CodexReasoningEffort,
-  type HermesModelOptions,
   type OpenCodeModelOptions,
   type ProviderCatalogEntry,
   type ProviderModelOption,
@@ -52,7 +51,6 @@ function OpenAIIcon({ className, ...props }: SVGProps<SVGSVGElement>) {
 export const PROVIDER_ICONS: Record<AgentProvider, IconComponent> = {
   claude: AnthropicIcon,
   codex: OpenAIIcon,
-  hermes: Box,
   opencode: SquareMenu,
 }
 
@@ -246,7 +244,7 @@ interface ChatPreferenceControlsProps {
   providerLocked?: boolean
   showCodexCliRequirementHints?: boolean
   model: string
-  modelOptions: ClaudeModelOptions | CodexModelOptions | HermesModelOptions | OpenCodeModelOptions
+  modelOptions: ClaudeModelOptions | CodexModelOptions | OpenCodeModelOptions
   onProviderChange?: (provider: AgentProvider) => void
   onModelChange: (provider: AgentProvider, model: string) => void
   onModelOptionChange: (change: ModelOptionChange) => void

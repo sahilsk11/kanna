@@ -550,11 +550,6 @@ export function createWsRouter({
         },
         planMode: false,
       },
-      hermes: {
-        model: "hermes-configured-default",
-        modelOptions: {},
-        planMode: false,
-      },
       opencode: {
         model: "opencode-configured-default",
         modelOptions: {},
@@ -590,14 +585,6 @@ export function createWsRouter({
         modelOptions: {
           ...snapshot.providerDefaults.codex.modelOptions,
           ...patch.providerDefaults?.codex?.modelOptions,
-        },
-      },
-      hermes: {
-        ...snapshot.providerDefaults.hermes,
-        ...patch.providerDefaults?.hermes,
-        modelOptions: {
-          ...snapshot.providerDefaults.hermes.modelOptions,
-          ...patch.providerDefaults?.hermes?.modelOptions,
         },
       },
       opencode: {

@@ -1833,31 +1833,6 @@ export function SettingsPage() {
                     </SettingsRow>
 
                     <SettingsRow
-                      title="Hermes Defaults"
-                      description="Saved defaults when using Hermes."
-                      alignStart
-                    >
-                      <div className="max-w-[420px]">
-                        <ChatPreferenceControls
-                          availableProviders={providerCatalog}
-                          selectedProvider="hermes"
-                          showProviderPicker={false}
-                          providerLocked
-                          model={providerDefaults.hermes.model}
-                          modelOptions={providerDefaults.hermes.modelOptions}
-                          onModelChange={(_, model) => {
-                            handleProviderDefaultModelChange("hermes", model)
-                          }}
-                          onModelOptionChange={() => {}}
-                          planMode={providerDefaults.hermes.planMode}
-                          onPlanModeChange={(planMode) => handleProviderDefaultPlanModeChange("hermes", planMode)}
-                          includePlanMode
-                          className="justify-start flex-wrap"
-                        />
-                      </div>
-                    </SettingsRow>
-
-                    <SettingsRow
                       title="OpenCode Defaults"
                       description="Saved defaults when using OpenCode."
                       alignStart
