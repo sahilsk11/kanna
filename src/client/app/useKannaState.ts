@@ -45,7 +45,21 @@ function sameProviders(left: ProviderCatalogEntry[] | null | undefined, right: P
   if (left === right) return true
   if (!left || !right) return false
   if (left.length !== right.length) return false
-  return left.every((provider, index) => provider.id === right[index]?.id)
+  return left.every((provider, index) => {
+    const other = right[index]
+    return Boolean(other)
+      && provider.id === other.id
+      && provider.label === other.label
+      && provider.defaultModel === other.defaultModel
+      && provider.models.length === other.models.length
+      && provider.models.every((model, modelIndex) => {
+        const otherModel = other.models[modelIndex]
+        return Boolean(otherModel)
+          && model.id === otherModel.id
+          && model.label === otherModel.label
+          && model.supportsEffort === otherModel.supportsEffort
+      })
+  })
 }
 
 function sameHistory(left: ChatSnapshot["history"] | null | undefined, right: ChatSnapshot["history"] | null | undefined) {
@@ -715,6 +729,7 @@ export interface KannaState {
   handleRenameProject: (projectId: string, sidebarTitle: string | undefined, realTitle: string) => Promise<void>
   handleShareChat: (chatId?: string | null) => Promise<void>
   handleArchiveChat: (chat: SidebarChatRow) => Promise<void>
+  handleUnarchiveChat: (chatId: string) => Promise<void>
   handleOpenArchivedChat: (chatId: string) => Promise<void>
   handleDeleteChat: (chat: SidebarChatRow) => Promise<void>
   handleHideProject: (projectId: string) => Promise<void>
@@ -1247,7 +1262,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     ? "starting"
     : null
   const effectiveRuntimeStatus = optimisticRuntimeStatus ?? runtime?.status ?? null
-  const availableProviders = activeChatSnapshot?.availableProviders ?? PROVIDERS
+  const availableProviders = activeChatSnapshot?.availableProviders ?? appSettings?.availableProviders ?? PROVIDERS
   const isProcessing = isProcessingStatus(effectiveRuntimeStatus ?? undefined)
   const canCancel = canCancelStatus(effectiveRuntimeStatus ?? undefined)
   const isDraining = runtime?.isDraining ?? false
@@ -1845,6 +1860,13 @@ export function useKannaState(activeChatId: string | null): KannaState {
   }, [activeChatId, dialog, navigate, sidebarProjectGroups, socket])
 
   const handleArchiveChat = useCallback(async (chat: SidebarChatRow) => {
+    const confirmed = await dialog.confirm({
+      title: "Archive Session",
+      description: "Are you sure you want to archive the session?",
+      confirmLabel: "Yes",
+      cancelLabel: "No",
+    })
+    if (!confirmed) return
     try {
       await socket.command({ type: "chat.archive", chatId: chat.chatId })
       if (chat.chatId === activeChatId) {
@@ -1855,7 +1877,16 @@ export function useKannaState(activeChatId: string | null): KannaState {
     } catch (error) {
       setCommandError(error instanceof Error ? error.message : String(error))
     }
-  }, [activeChatId, navigate, sidebarProjectGroups, socket])
+  }, [activeChatId, dialog, navigate, sidebarProjectGroups, socket])
+
+  const handleUnarchiveChat = useCallback(async (chatId: string) => {
+    try {
+      await socket.command({ type: "chat.unarchive", chatId })
+      setCommandError(null)
+    } catch (error) {
+      setCommandError(error instanceof Error ? error.message : String(error))
+    }
+  }, [socket])
 
   const handleOpenArchivedChat = useCallback(async (chatId: string) => {
     try {
@@ -2186,6 +2217,7 @@ export function useKannaState(activeChatId: string | null): KannaState {
     handleRenameProject,
     handleShareChat,
     handleArchiveChat,
+    handleUnarchiveChat,
     handleOpenArchivedChat,
     handleDeleteChat,
     handleHideProject,

@@ -4,7 +4,8 @@ import path from "node:path"
 import { createInterface } from "node:readline"
 import { fileURLToPath } from "node:url"
 import type { Readable, Writable } from "node:stream"
-import type { ContextWindowUsageSnapshot, TodoItem, TranscriptEntry } from "../shared/types"
+import { DEFAULT_HERMES_MODEL, type AgentProvider, type ContextWindowUsageSnapshot, type TodoItem, type TranscriptEntry } from "../shared/types"
+import { AsyncQueue } from "./async-queue"
 import type { HarnessEvent, HarnessTurn } from "./harness-types"
 import {
   type CancelParams,
@@ -35,7 +36,7 @@ import {
   isSessionUpdateNotification,
 } from "./hermes-acp-protocol"
 
-interface HermesAcpProcess {
+export interface AcpProcess {
   stdin: Writable
   stdout: Readable
   stderr: Readable
@@ -45,7 +46,7 @@ interface HermesAcpProcess {
   on(event: "error", listener: (error: Error) => void): this
 }
 
-type SpawnHermesAcp = (cwd: string) => HermesAcpProcess
+export type SpawnAcp = (cwd: string) => AcpProcess
 
 const SERVER_DIR = path.dirname(fileURLToPath(import.meta.url))
 const HERMES_ACP_BRIDGE_PATH = path.join(SERVER_DIR, "hermes-acp-bridge.cjs")
@@ -61,12 +62,14 @@ interface PendingTurn {
   startedToolIds: Set<string>
   resolved: boolean
   assistantText: string
+  hasVisibleOutput: boolean
+  hasThinkingStatus: boolean
 }
 
 interface SessionContext {
   chatId: string
   cwd: string
-  child: HermesAcpProcess
+  child: AcpProcess
   pendingRequests: Map<HermesAcpRequestId, PendingRequest<unknown>>
   pendingTurn: PendingTurn | null
   sessionToken: string | null
@@ -92,6 +95,15 @@ export interface GenerateHermesStructuredArgs {
   prompt: string
 }
 
+interface AcpProviderConfig {
+  provider: Extract<AgentProvider, "hermes">
+  displayName: string
+  defaultModel: string
+  toolsLabel: string
+  planToolIdPrefix: string
+  fallbackToolName: string
+}
+
 function timestamped<T extends Omit<TranscriptEntry, "_id" | "createdAt">>(
   entry: T,
   createdAt = Date.now()
@@ -103,12 +115,12 @@ function timestamped<T extends Omit<TranscriptEntry, "_id" | "createdAt">>(
   } as TranscriptEntry
 }
 
-function hermesSystemInitEntry(model: string): TranscriptEntry {
+function acpSystemInitEntry(config: AcpProviderConfig, model: string): TranscriptEntry {
   return timestamped({
     kind: "system_init",
-    provider: "hermes",
+    provider: config.provider,
     model,
-    tools: ["Hermes ACP"],
+    tools: [config.toolsLabel],
     agents: [],
     slashCommands: [],
     mcpServers: [],
@@ -214,14 +226,14 @@ function planEntriesToTodos(entries: PlanEntry[]): TodoItem[] {
   }))
 }
 
-function planToolCall(entries: PlanEntry[]): TranscriptEntry {
+function planToolCall(config: AcpProviderConfig, entries: PlanEntry[]): TranscriptEntry {
   return timestamped({
     kind: "tool_call",
     tool: {
       kind: "tool",
       toolKind: "todo_write",
       toolName: "TodoWrite",
-      toolId: `hermes-plan-${randomUUID()}`,
+      toolId: `${config.planToolIdPrefix}-${randomUUID()}`,
       input: {
         todos: planEntriesToTodos(entries),
       },
@@ -242,19 +254,19 @@ function toolPayload(update: ToolCallUpdatePayload): Record<string, unknown> {
   }
 }
 
-function toolNameFromUpdate(update: ToolCallUpdatePayload): string {
+function toolNameFromUpdate(config: AcpProviderConfig, update: ToolCallUpdatePayload): string {
   const rawInput = asRecord(update.rawInput)
   const rawToolName = rawInput?.tool ?? rawInput?.toolName ?? rawInput?.name
   if (typeof rawToolName === "string" && rawToolName.trim()) return rawToolName.trim()
-  return update.title?.trim() || update.kind || "HermesTool"
+  return update.title?.trim() || update.kind || config.fallbackToolName
 }
 
-function toolCallEntry(update: ToolCallUpdatePayload): TranscriptEntry {
+function toolCallEntry(config: AcpProviderConfig, update: ToolCallUpdatePayload): TranscriptEntry {
   const payload = toolPayload(update)
   const command = typeof payload.command === "string" ? payload.command : null
   const path = typeof payload.path === "string" ? payload.path : null
   const toolId = update.toolCallId
-  const toolName = toolNameFromUpdate(update)
+  const toolName = toolNameFromUpdate(config, update)
 
   if (update.kind === "execute" && command) {
     return timestamped({
@@ -374,58 +386,27 @@ function chooseDenyOutcome(options: PermissionOption[]): RequestPermissionRespon
   }
 }
 
-class AsyncQueue<T> implements AsyncIterable<T> {
-  private values: T[] = []
-  private resolvers: Array<(result: IteratorResult<T>) => void> = []
-  private done = false
-
-  push(value: T) {
-    if (this.done) return
-    const resolver = this.resolvers.shift()
-    if (resolver) {
-      resolver({ value, done: false })
-      return
-    }
-    this.values.push(value)
-  }
-
-  finish() {
-    if (this.done) return
-    this.done = true
-    while (this.resolvers.length > 0) {
-      const resolver = this.resolvers.shift()
-      resolver?.({ value: undefined as T, done: true })
-    }
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return {
-      next: () => {
-        if (this.values.length > 0) {
-          return Promise.resolve({ value: this.values.shift() as T, done: false })
-        }
-        if (this.done) {
-          return Promise.resolve({ value: undefined as T, done: true })
-        }
-        return new Promise<IteratorResult<T>>((resolve) => {
-          this.resolvers.push(resolve)
-        })
-      },
-    }
-  }
-}
-
 export class HermesAcpManager {
   private readonly sessions = new Map<string, SessionContext>()
-  private readonly spawnProcess: SpawnHermesAcp
+  private readonly spawnProcess: SpawnAcp
+  private readonly providerConfig: AcpProviderConfig
 
-  constructor(args: { spawnProcess?: SpawnHermesAcp } = {}) {
+  constructor(args: { spawnProcess?: SpawnAcp; providerConfig?: Partial<AcpProviderConfig> } = {}) {
+    this.providerConfig = {
+      provider: "hermes",
+      displayName: "Hermes",
+      defaultModel: DEFAULT_HERMES_MODEL,
+      toolsLabel: "Hermes ACP",
+      planToolIdPrefix: "hermes-plan",
+      fallbackToolName: "HermesTool",
+      ...args.providerConfig,
+    }
     this.spawnProcess = args.spawnProcess ?? ((cwd) =>
       spawn(process.execPath, [HERMES_ACP_BRIDGE_PATH], {
         cwd,
         stdio: ["pipe", "pipe", "pipe"],
         env: process.env,
-      }) as unknown as HermesAcpProcess)
+      }) as unknown as AcpProcess)
   }
 
   async startSession(args: StartHermesSessionArgs): Promise<string | undefined> {
@@ -531,39 +512,47 @@ export class HermesAcpManager {
   async startTurn(args: StartHermesTurnArgs): Promise<HarnessTurn> {
     const context = this.requireSession(args.chatId)
     if (context.pendingTurn) {
-      throw new Error("Hermes turn is already running")
+      throw new Error(`${this.providerConfig.displayName} turn is already running`)
     }
     if (!context.sessionToken) {
-      throw new Error("Hermes session not initialized")
+      throw new Error(`${this.providerConfig.displayName} session not initialized`)
     }
 
     const queue = new AsyncQueue<HarnessEvent>()
     queue.push({ type: "session_token", sessionToken: context.sessionToken })
-    queue.push({ type: "transcript", entry: hermesSystemInitEntry(args.model ?? "hermes-configured-default") })
+    queue.push({ type: "transcript", entry: acpSystemInitEntry(this.providerConfig, args.model ?? this.providerConfig.defaultModel) })
 
     const pendingTurn: PendingTurn = {
       queue,
       startedToolIds: new Set(),
       resolved: false,
       assistantText: "",
+      hasVisibleOutput: false,
+      hasThinkingStatus: false,
     }
     context.pendingTurn = pendingTurn
 
     void this.sendRequest<PromptResponse>(context, "session/prompt", {
-      sessionId: context.sessionToken,
-      messageId: randomUUID(),
-      prompt: [
-        {
-          type: "text",
-          text: args.content,
-        },
-      ],
-    } satisfies PromptParams)
-      .then((response) => this.handlePromptCompleted(context, response))
-      .catch((error) => this.failTurn(context, errorMessage(error)))
+          sessionId: context.sessionToken!,
+          messageId: randomUUID(),
+          prompt: [
+            {
+              type: "text",
+              text: args.content,
+            },
+          ],
+        } satisfies PromptParams)
+      .then((response) => {
+        this.handlePromptCompleted(context, response)
+      })
+      .catch((error) => {
+        if (context.pendingTurn === pendingTurn && !pendingTurn.resolved) {
+          this.failTurn(context, errorMessage(error))
+        }
+      })
 
     return {
-      provider: "hermes",
+      provider: this.providerConfig.provider,
       stream: queue,
       interrupt: async () => {
         const pendingTurn = context.pendingTurn
@@ -641,7 +630,7 @@ export class HermesAcpManager {
   private requireSession(chatId: string) {
     const context = this.sessions.get(chatId)
     if (!context || context.closed) {
-      throw new Error("Hermes session not started")
+      throw new Error(`${this.providerConfig.displayName} session not started`)
     }
     return context
   }
@@ -686,7 +675,7 @@ export class HermesAcpManager {
       if (context.closed) return
       queueMicrotask(() => {
         if (context.closed) return
-        const message = context.stderrLines.at(-1) || `Hermes ACP exited with code ${code ?? 1}`
+        const message = context.stderrLines.at(-1) || `${this.providerConfig.displayName} ACP exited with code ${code ?? 1}`
         this.failContext(context, message)
       })
     })
@@ -737,9 +726,10 @@ export class HermesAcpManager {
       case "agent_message_chunk": {
         const text = textFromContentBlock((update as { content?: unknown }).content)
         if (!text) return
-        const hidden = isHermesInternalAssistantText(text)
+        const hidden = this.providerConfig.provider === "hermes" && isHermesInternalAssistantText(text)
         if (!hidden) {
           pendingTurn.assistantText += text
+          pendingTurn.hasVisibleOutput = true
         }
         pendingTurn.queue.push({
           type: "transcript",
@@ -773,9 +763,10 @@ export class HermesAcpManager {
           ? (update as { entries: PlanEntry[] }).entries
           : []
         if (entries.length === 0) return
+        pendingTurn.hasVisibleOutput = true
         pendingTurn.queue.push({
           type: "transcript",
-          entry: planToolCall(entries),
+          entry: planToolCall(this.providerConfig, entries),
         })
         return
       }
@@ -799,9 +790,10 @@ export class HermesAcpManager {
   private handleToolUpdate(pendingTurn: PendingTurn, update: ToolCallUpdatePayload) {
     if (!pendingTurn.startedToolIds.has(update.toolCallId)) {
       pendingTurn.startedToolIds.add(update.toolCallId)
+      pendingTurn.hasVisibleOutput = true
       pendingTurn.queue.push({
         type: "transcript",
-        entry: toolCallEntry(update),
+        entry: toolCallEntry(this.providerConfig, update),
       })
     }
 
@@ -818,6 +810,10 @@ export class HermesAcpManager {
     if (!pendingTurn || pendingTurn.resolved) return
     pendingTurn.resolved = true
 
+    const isCancelled = response.stopReason === "cancelled"
+    const isRefusal = response.stopReason === "refusal"
+    const noOutputMessage = this.getNoOutputErrorMessage(context, pendingTurn, response)
+
     const usage = normalizeUsageFromPrompt(response.usage)
     if (usage) {
       pendingTurn.queue.push({
@@ -829,8 +825,7 @@ export class HermesAcpManager {
       })
     }
 
-    const isCancelled = response.stopReason === "cancelled"
-    const isError = response.stopReason === "refusal"
+    const isError = isRefusal || Boolean(noOutputMessage)
     pendingTurn.queue.push({
       type: "transcript",
       entry: timestamped({
@@ -838,11 +833,24 @@ export class HermesAcpManager {
         subtype: isCancelled ? "cancelled" : isError ? "error" : "success",
         isError,
         durationMs: 0,
-        result: isError ? response.stopReason : "",
+        result: noOutputMessage ?? (isRefusal ? response.stopReason : ""),
       }),
     })
     pendingTurn.queue.finish()
     context.pendingTurn = null
+  }
+
+  private getNoOutputErrorMessage(
+    context: SessionContext,
+    pendingTurn: PendingTurn,
+    response: PromptResponse
+  ) {
+    if (response.stopReason !== "end_turn") return null
+    if (pendingTurn.hasVisibleOutput) return null
+    const stderr = context.stderrLines.at(-1)
+    return stderr
+      ? `${this.providerConfig.displayName} returned no output. Last ${this.providerConfig.displayName} log: ${stderr}`
+      : `${this.providerConfig.displayName} returned no output. Check ${this.providerConfig.displayName} authentication and provider configuration.`
   }
 
   private failTurn(context: SessionContext, message: string) {

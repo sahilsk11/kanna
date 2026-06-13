@@ -1,7 +1,7 @@
 export const STORE_VERSION = 2 as const
 export const PROTOCOL_VERSION = 1 as const
 
-export type AgentProvider = "claude" | "codex" | "hermes"
+export type AgentProvider = "claude" | "codex" | "hermes" | "opencode"
 export type LlmProviderKind = "openai" | "openrouter" | "custom"
 export type AppThemePreference = "light" | "dark" | "system"
 export type SessionGroupingPreference = "default" | "tasks"
@@ -12,6 +12,7 @@ export type EditorPreset = "cursor" | "vscode" | "xcode" | "windsurf" | "custom"
 export const DEFAULT_OPENAI_SDK_MODEL = "gpt-5.4-mini"
 export const DEFAULT_OPENROUTER_SDK_MODEL = "moonshotai/kimi-k2.5:nitro"
 export const DEFAULT_HERMES_MODEL = "hermes-configured-default"
+export const DEFAULT_OPENCODE_MODEL = "opencode-configured-default"
 
 export type AttachmentKind = "image" | "file"
 export type StandaloneTranscriptAttachmentMode = "metadata" | "bundle"
@@ -64,6 +65,15 @@ export interface InstalledSkillSummary {
 export interface InstalledSkillsSnapshot {
   lockFilePath: string
   skills: InstalledSkillSummary[]
+}
+
+export interface SavedSkillSummary {
+  name: string
+  description: string
+}
+
+export interface SavedSkillsSnapshot {
+  skills: SavedSkillSummary[]
 }
 
 export interface ChatAttachment {
@@ -184,11 +194,13 @@ export interface CodexModelOptions {
 }
 
 export interface HermesModelOptions {}
+export interface OpenCodeModelOptions {}
 
 export interface ProviderModelOptionsByProvider {
   claude: ClaudeModelOptions
   codex: CodexModelOptions
   hermes: HermesModelOptions
+  opencode: OpenCodeModelOptions
 }
 
 export interface ProviderPreference<TModelOptions> {
@@ -201,6 +213,7 @@ export type ChatProviderPreferences = {
   claude: ProviderPreference<ClaudeModelOptions>
   codex: ProviderPreference<CodexModelOptions>
   hermes: ProviderPreference<HermesModelOptions>
+  opencode: ProviderPreference<OpenCodeModelOptions>
 }
 
 export type ModelOptions = Partial<{
@@ -218,6 +231,7 @@ export const DEFAULT_CODEX_MODEL_OPTIONS = {
 } as const satisfies CodexModelOptions
 
 export const DEFAULT_HERMES_MODEL_OPTIONS = {} as const satisfies HermesModelOptions
+export const DEFAULT_OPENCODE_MODEL_OPTIONS = {} as const satisfies OpenCodeModelOptions
 
 export function isClaudeReasoningEffort(value: unknown): value is ClaudeReasoningEffort {
   return CLAUDE_REASONING_OPTIONS.some((option) => option.id === value)
@@ -234,6 +248,16 @@ export const CLAUDE_CONTEXT_WINDOW_OPTIONS = [
 
 export function isClaudeContextWindow(value: unknown): value is ClaudeContextWindow {
   return CLAUDE_CONTEXT_WINDOW_OPTIONS.some((option) => option.id === value)
+}
+
+function titleCaseWord(value: string) {
+  return value.length === 0 ? value : `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`
+}
+
+export function deriveClaudeModelLabel(modelId: string): string {
+  const parts = modelId.replace(/^claude-/, "").split("-").filter(Boolean)
+  if (parts.length === 0) return modelId
+  return titleCaseWord(parts[0] ?? modelId)
 }
 
 export interface ProviderCatalogEntry {
@@ -255,8 +279,13 @@ export const PROVIDERS: ProviderCatalogEntry[] = [
     supportsPlanMode: true,
     models: [
       {
-        id: "claude-opus-4-7",
-        label: "Opus 4.7",
+        id: "fable",
+        label: deriveClaudeModelLabel("fable"),
+        supportsEffort: true,
+      },
+      {
+        id: "claude-opus-4-8",
+        label: deriveClaudeModelLabel("claude-opus-4-8"),
         supportsEffort: true,
         aliases: ["opus"],
         contextWindowOptions: [...CLAUDE_CONTEXT_WINDOW_OPTIONS],
@@ -264,14 +293,14 @@ export const PROVIDERS: ProviderCatalogEntry[] = [
       },
       {
         id: "claude-sonnet-4-6",
-        label: "Sonnet 4.6",
+        label: deriveClaudeModelLabel("claude-sonnet-4-6"),
         supportsEffort: true,
         aliases: ["sonnet"],
         contextWindowOptions: [...CLAUDE_CONTEXT_WINDOW_OPTIONS],
       },
       {
         id: "claude-haiku-4-5-20251001",
-        label: "Haiku 4.5",
+        label: deriveClaudeModelLabel("claude-haiku-4-5-20251001"),
         supportsEffort: true,
         aliases: ["haiku"],
       },
@@ -298,6 +327,16 @@ export const PROVIDERS: ProviderCatalogEntry[] = [
     supportsPlanMode: false,
     models: [
       { id: DEFAULT_HERMES_MODEL, label: "Configured Default", supportsEffort: false, aliases: ["default"] },
+    ],
+    efforts: [],
+  },
+  {
+    id: "opencode",
+    label: "OpenCode",
+    defaultModel: DEFAULT_OPENCODE_MODEL,
+    supportsPlanMode: false,
+    models: [
+      { id: DEFAULT_OPENCODE_MODEL, label: "Configured Default", supportsEffort: false, aliases: ["default"] },
     ],
     efforts: [],
   },
@@ -329,7 +368,7 @@ export function normalizeProviderModelId(
     ?? getProviderCatalog(provider).defaultModel
 }
 
-export function normalizeClaudeModelId(modelId?: string, fallbackModelId = "claude-opus-4-7"): string {
+export function normalizeClaudeModelId(modelId?: string, fallbackModelId = "claude-opus-4-8"): string {
   return normalizeProviderModelId("claude", modelId, fallbackModelId)
 }
 
@@ -339,6 +378,14 @@ export function normalizeCodexModelId(modelId?: string, fallbackModelId = "gpt-5
 
 export function normalizeHermesModelId(modelId?: string, fallbackModelId = DEFAULT_HERMES_MODEL): string {
   return normalizeProviderModelId("hermes", modelId, fallbackModelId)
+}
+
+export function normalizeOpenCodeModelId(modelId?: string, fallbackModelId = DEFAULT_OPENCODE_MODEL): string {
+  const trimmedModelId = typeof modelId === "string" ? modelId.trim() : ""
+  if (!trimmedModelId || trimmedModelId === "default" || trimmedModelId === DEFAULT_OPENCODE_MODEL) {
+    return fallbackModelId
+  }
+  return trimmedModelId
 }
 
 export function getProviderModelOption(provider: AgentProvider, modelId: string): ProviderModelOption | undefined {
@@ -413,6 +460,7 @@ export interface SidebarChatRow {
   localPath: string
   provider: AgentProvider | null
   lastMessageAt?: number
+  archivedAt?: number
   hasAutomation: boolean
   canFork?: boolean
 }
@@ -475,6 +523,7 @@ export interface AppSettingsSnapshot {
   }
   defaultProvider: DefaultProviderPreference
   providerDefaults: ChatProviderPreferences
+  availableProviders?: ProviderCatalogEntry[]
   warning: string | null
   filePathDisplay: string
 }
@@ -493,6 +542,7 @@ export interface AppSettingsPatch {
     claude?: Partial<ProviderPreference<ClaudeModelOptions>>
     codex?: Partial<ProviderPreference<CodexModelOptions>>
     hermes?: Partial<ProviderPreference<HermesModelOptions>>
+    opencode?: Partial<ProviderPreference<OpenCodeModelOptions>>
   }
 }
 

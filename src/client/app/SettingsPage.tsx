@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type KeyboardEvent, type ReactNode } from "react"
 import {
+  ArchiveRestore,
   BookText,
   Command,
   Code,
@@ -27,7 +28,6 @@ import {
   DEFAULT_KEYBINDINGS,
   DEFAULT_OPENAI_SDK_MODEL,
   DEFAULT_OPENROUTER_SDK_MODEL,
-  PROVIDERS,
   type AgentProvider,
   type InstalledSkillSummary,
   type KeybindingAction,
@@ -38,6 +38,8 @@ import {
   type SkillSearchSnapshot,
   type SkillUninstallResult,
   type SessionGroupingPreference,
+  type SidebarChatRow,
+  type SidebarProjectGroup,
   type UpdateSnapshot,
 } from "../../shared/types"
 import { markdownComponents } from "../components/messages/shared"
@@ -60,6 +62,8 @@ import {
 import { useTheme, type ThemePreference } from "../hooks/useTheme"
 import { KEYBINDING_ACTION_LABELS, formatKeybindingInput, getResolvedKeybindings, parseKeybindingInput } from "../lib/keybindings"
 import { playChatNotificationSound } from "../lib/chatSounds"
+import { formatSidebarAgeLabel } from "../lib/formatters"
+import { getSidebarChatTimestamp } from "../lib/sidebarChats"
 import { cn } from "../lib/utils"
 import {
   DEFAULT_TERMINAL_MIN_COLUMN_WIDTH,
@@ -99,6 +103,12 @@ const sidebarItems = [
     label: "Keybindings",
     icon: Command,
     subtitle: "Edit global app shortcuts stored in the active keybindings file.",
+  },
+  {
+    id: "archived-sessions",
+    label: "Archived Sessions",
+    icon: ArchiveRestore,
+    subtitle: "Review archived sessions and restore them to the sidebar.",
   },
   // always last
   {
@@ -237,6 +247,97 @@ export function formatPublishedDate(value: string | null) {
     day: "numeric",
     year: "numeric",
   }).format(parsed)
+}
+
+interface ArchivedSessionRow {
+  chat: SidebarChatRow
+  group: SidebarProjectGroup
+}
+
+export function getArchivedSessionRows(projectGroups: SidebarProjectGroup[]): ArchivedSessionRow[] {
+  return projectGroups
+    .flatMap((group) =>
+      (group.archivedChats ?? []).map((chat) => ({
+        chat,
+        group,
+      }))
+    )
+    .sort((left, right) =>
+      (right.chat.archivedAt ?? getSidebarChatTimestamp(right.chat))
+      - (left.chat.archivedAt ?? getSidebarChatTimestamp(left.chat))
+    )
+}
+
+export function ArchivedSessionsSection({
+  projectGroups,
+  nowMs,
+  onUnarchiveChat,
+}: {
+  projectGroups: SidebarProjectGroup[]
+  nowMs: number
+  onUnarchiveChat: (chatId: string) => void
+}) {
+  const archivedSessions = getArchivedSessionRows(projectGroups)
+
+  if (!archivedSessions.length) {
+    return (
+      <div className="rounded-lg border border-border bg-card/40 px-4 py-8 text-center text-sm text-muted-foreground">
+        No archived sessions.
+      </div>
+    )
+  }
+
+  return (
+    <div className="border-b border-border">
+      {archivedSessions.map(({ chat, group }, index) => {
+        const timestamp = chat.archivedAt ?? getSidebarChatTimestamp(chat)
+        const ageLabel = formatSidebarAgeLabel(timestamp, nowMs)
+        const relativeAge = ageLabel === "now" ? "now" : ageLabel ? `${ageLabel} ago` : null
+        const archivedDate = new Intl.DateTimeFormat(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }).format(timestamp)
+
+        return (
+          <SettingsRow
+            key={chat.chatId}
+            title={chat.title}
+            description={(
+              <span className="flex min-w-0 flex-col gap-1">
+                <span className="truncate">
+                  {group.title}
+                  {chat.provider ? ` · ${chat.provider}` : ""}
+                  {relativeAge ? ` · ${relativeAge}` : ""}
+                </span>
+                {group.localPath ? (
+                  <span className="truncate font-mono text-xs">{group.localPath}</span>
+                ) : null}
+              </span>
+            )}
+            bordered={index !== 0}
+            alignStart
+          >
+            <div className="flex min-w-0 flex-col items-stretch gap-2 md:items-end">
+              <div className="text-left text-xs text-muted-foreground md:text-right">
+                {archivedDate}
+              </div>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => onUnarchiveChat(chat.chatId)}
+                className="gap-1.5"
+              >
+                <ArchiveRestore className="h-3.5 w-3.5" />
+                Unarchive
+              </Button>
+            </div>
+          </SettingsRow>
+        )
+      })}
+    </div>
+  )
 }
 
 export function ChangelogSection({
@@ -841,6 +942,7 @@ export function SettingsPage() {
   const llmProvider = state.llmProvider
   const defaultProvider = useChatPreferencesStore((store) => store.defaultProvider)
   const providerDefaults = useChatPreferencesStore((store) => store.providerDefaults)
+  const providerCatalog = state.availableProviders
   const setDefaultProvider = useChatPreferencesStore((store) => store.setDefaultProvider)
   const setProviderDefaultModel = useChatPreferencesStore((store) => store.setProviderDefaultModel)
   const setProviderDefaultModelOptions = useChatPreferencesStore((store) => store.setProviderDefaultModelOptions)
@@ -1658,7 +1760,7 @@ export function SettingsPage() {
                             <SelectItem value="last_used">
                               Last Used
                             </SelectItem>
-                            {PROVIDERS.map((provider) => (
+                            {providerCatalog.map((provider) => (
                               <SelectItem key={provider.id} value={provider.id}>
                                 {provider.label}
                               </SelectItem>
@@ -1675,7 +1777,7 @@ export function SettingsPage() {
                     >
                       <div className="max-w-[420px]">
                         <ChatPreferenceControls
-                          availableProviders={PROVIDERS}
+                          availableProviders={providerCatalog}
                           selectedProvider="claude"
                           showProviderPicker={false}
                           providerLocked
@@ -1706,7 +1808,7 @@ export function SettingsPage() {
                     >
                       <div className="max-w-[420px]">
                         <ChatPreferenceControls
-                          availableProviders={PROVIDERS}
+                          availableProviders={providerCatalog}
                           selectedProvider="codex"
                           showProviderPicker={false}
                           providerLocked
@@ -1737,7 +1839,7 @@ export function SettingsPage() {
                     >
                       <div className="max-w-[420px]">
                         <ChatPreferenceControls
-                          availableProviders={PROVIDERS}
+                          availableProviders={providerCatalog}
                           selectedProvider="hermes"
                           showProviderPicker={false}
                           providerLocked
@@ -1749,6 +1851,31 @@ export function SettingsPage() {
                           onModelOptionChange={() => {}}
                           planMode={providerDefaults.hermes.planMode}
                           onPlanModeChange={(planMode) => handleProviderDefaultPlanModeChange("hermes", planMode)}
+                          includePlanMode
+                          className="justify-start flex-wrap"
+                        />
+                      </div>
+                    </SettingsRow>
+
+                    <SettingsRow
+                      title="OpenCode Defaults"
+                      description="Saved defaults when using OpenCode."
+                      alignStart
+                    >
+                      <div className="max-w-[420px]">
+                        <ChatPreferenceControls
+                          availableProviders={providerCatalog}
+                          selectedProvider="opencode"
+                          showProviderPicker={false}
+                          providerLocked
+                          model={providerDefaults.opencode.model}
+                          modelOptions={providerDefaults.opencode.modelOptions}
+                          onModelChange={(_, model) => {
+                            handleProviderDefaultModelChange("opencode", model)
+                          }}
+                          onModelOptionChange={() => {}}
+                          planMode={providerDefaults.opencode.planMode}
+                          onPlanModeChange={(planMode) => handleProviderDefaultPlanModeChange("opencode", planMode)}
                           includePlanMode
                           className="justify-start flex-wrap"
                         />
@@ -1879,6 +2006,14 @@ export function SettingsPage() {
                   </div>
                 ) : selectedPage === "skills" ? (
                   <SkillsSection state={state} />
+                ) : selectedPage === "archived-sessions" ? (
+                  <ArchivedSessionsSection
+                    projectGroups={state.sidebarData.projectGroups}
+                    nowMs={Date.now()}
+                    onUnarchiveChat={(chatId) => {
+                      void state.handleUnarchiveChat(chatId)
+                    }}
+                  />
                 ) : (
                   <ChangelogSection
                     status={changelogStatus}

@@ -12,6 +12,33 @@ function entry(partial: Omit<TranscriptEntry, "_id" | "createdAt">): TranscriptE
 }
 
 describe("processTranscriptMessages", () => {
+  test("coalesces adjacent visible assistant text chunks", () => {
+    const messages = processTranscriptMessages([
+      entry({ kind: "assistant_text", text: "I" }),
+      entry({ kind: "assistant_text", text: "'m " }),
+      entry({ kind: "assistant_text", text: "powered by OpenCode." }),
+    ])
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      kind: "assistant_text",
+      text: "I'm powered by OpenCode.",
+    })
+  })
+
+  test("drops hidden assistant text chunks before hydration", () => {
+    const messages = processTranscriptMessages([
+      entry({ kind: "assistant_text", text: "raw thought", hidden: true }),
+      entry({ kind: "assistant_text", text: "Visible" }),
+    ])
+
+    expect(messages).toHaveLength(1)
+    expect(messages[0]).toMatchObject({
+      kind: "assistant_text",
+      text: "Visible",
+    })
+  })
+
   test("hydrates tool results onto prior tool calls", () => {
     const messages = processTranscriptMessages([
       entry({

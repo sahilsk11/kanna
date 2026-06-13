@@ -17,11 +17,15 @@ import type { ClientCommand } from "../shared/protocol"
 import { EventStore } from "./event-store"
 import type { AnalyticsReporter } from "./analytics"
 import { NoopAnalyticsReporter } from "./analytics"
+import { AsyncQueue } from "./async-queue"
 import { CodexAppServerManager } from "./codex-app-server"
 import { type GenerateChatTitleResult, generateTitleForChatDetailed } from "./generate-title"
 import type { HarnessEvent, HarnessToolRequest, HarnessTurn } from "./harness-types"
 import { HermesAcpManager } from "./hermes-acp"
+import { OpenCodeServerManager } from "./opencode-server"
 import {
+  applyClaudeSdkModels,
+  type ClaudeSdkModelInfo,
   codexServiceTierFromModelOptions,
   getServerProviderCatalog,
   normalizeClaudeModelOptions,
@@ -86,6 +90,7 @@ interface ClaudeSessionHandle {
   sendPrompt: (content: string) => Promise<void>
   setModel: (model: string) => Promise<void>
   setPermissionMode: (planMode: boolean) => Promise<void>
+  supportedModels?: () => Promise<ClaudeSdkModelInfo[]>
 }
 
 interface ClaudeSessionState {
@@ -108,6 +113,7 @@ interface AgentCoordinatorArgs {
   analytics?: AnalyticsReporter
   codexManager?: CodexAppServerManager
   hermesManager?: HermesAcpManager
+  opencodeManager?: OpenCodeServerManager
   generateTitle?: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
   startClaudeSession?: (args: {
     localPath: string
@@ -515,53 +521,6 @@ async function* createClaudeHarnessStream(q: Query): AsyncGenerator<HarnessEvent
   }
 }
 
-class AsyncMessageQueue<T> implements AsyncIterable<T> {
-  private readonly values: T[] = []
-  private readonly waiters: Array<(result: IteratorResult<T>) => void> = []
-  private closed = false
-
-  push(value: T) {
-    if (this.closed) {
-      throw new Error("Cannot push to a closed queue")
-    }
-
-    const waiter = this.waiters.shift()
-    if (waiter) {
-      waiter({ done: false, value })
-      return
-    }
-
-    this.values.push(value)
-  }
-
-  close() {
-    if (this.closed) return
-    this.closed = true
-    while (this.waiters.length > 0) {
-      const waiter = this.waiters.shift()
-      waiter?.({ done: true, value: undefined as never })
-    }
-  }
-
-  [Symbol.asyncIterator](): AsyncIterator<T> {
-    return {
-      next: async () => {
-        if (this.values.length > 0) {
-          return { done: false, value: this.values.shift() as T }
-        }
-
-        if (this.closed) {
-          return { done: true, value: undefined as never }
-        }
-
-        return await new Promise<IteratorResult<T>>((resolve) => {
-          this.waiters.push(resolve)
-        })
-      },
-    }
-  }
-}
-
 async function startClaudeSession(args: {
   localPath: string
   model: string
@@ -626,7 +585,7 @@ async function startClaudeSession(args: {
     } satisfies PermissionResult
   }
 
-  const promptQueue = new AsyncMessageQueue<SDKUserMessage>()
+  const promptQueue = new AsyncQueue<SDKUserMessage>({ pushAfterClose: "throw" })
 
   const q = query({
     prompt: promptQueue,
@@ -675,6 +634,7 @@ async function startClaudeSession(args: {
     setPermissionMode: async (planMode: boolean) => {
       await q.setPermissionMode(planMode ? "plan" : "acceptEdits")
     },
+    supportedModels: async () => await q.supportedModels(),
     close: () => {
       promptQueue.close()
       q.close()
@@ -688,6 +648,7 @@ export class AgentCoordinator {
   private readonly analytics: AnalyticsReporter
   private readonly codexManager: CodexAppServerManager
   private readonly hermesManager: HermesAcpManager
+  private readonly opencodeManager: OpenCodeServerManager
   private readonly generateTitle: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
   private readonly startClaudeSessionFn: NonNullable<AgentCoordinatorArgs["startClaudeSession"]>
   private reportBackgroundError: ((message: string) => void) | null = null
@@ -701,6 +662,7 @@ export class AgentCoordinator {
     this.analytics = args.analytics ?? NoopAnalyticsReporter
     this.codexManager = args.codexManager ?? new CodexAppServerManager()
     this.hermesManager = args.hermesManager ?? new HermesAcpManager()
+    this.opencodeManager = args.opencodeManager ?? new OpenCodeServerManager()
     this.generateTitle = args.generateTitle ?? generateTitleForChatDetailed
     this.startClaudeSessionFn = args.startClaudeSession ?? startClaudeSession
   }
@@ -735,6 +697,20 @@ export class AgentCoordinator {
     this.onStateChange(chatId, options)
   }
 
+  private refreshClaudeModelCatalog(session: ClaudeSessionHandle) {
+    if (!session.supportedModels) return
+    void session.supportedModels()
+      .then((models) => {
+        if (applyClaudeSdkModels(models)) {
+          this.emitStateChange(undefined, { immediate: true })
+        }
+      })
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : String(error)
+        this.reportBackgroundError?.(`[claude-models] failed to refresh Claude model catalog: ${message}`)
+      })
+  }
+
   getActiveTurnProfile(chatId: string): SendToStartingProfile | null {
     const active = this.activeTurns.get(chatId)
     if (!active?.clientTraceId || active.profilingStartedAt === undefined) {
@@ -763,6 +739,7 @@ export class AgentCoordinator {
       this.claudeSessions.delete(chatId)
     }
     this.hermesManager.stopSession(chatId)
+    this.opencodeManager.stopSession(chatId)
     this.emitStateChange(chatId)
   }
 
@@ -779,6 +756,7 @@ export class AgentCoordinator {
     }
     this.codexManager.stopAll()
     this.hermesManager.stopAll()
+    this.opencodeManager.stopAll()
     this.emitStateChange()
   }
 
@@ -801,6 +779,15 @@ export class AgentCoordinator {
     }
 
     if (provider === "hermes") {
+      return {
+        model: normalizeServerModel(provider, options.model),
+        effort: undefined,
+        serviceTier: undefined,
+        planMode: false,
+      }
+    }
+
+    if (provider === "opencode") {
       return {
         model: normalizeServerModel(provider, options.model),
         effort: undefined,
@@ -1019,12 +1006,13 @@ export class AgentCoordinator {
         model: args.model,
       })
     } else {
+      const manager = args.provider === "opencode" ? this.opencodeManager : this.hermesManager
       logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
         chatId: args.chatId,
         provider: args.provider,
         model: args.model,
       })
-      const sessionToken = await this.hermesManager.startSession({
+      const sessionToken = await manager.startSession({
         chatId: args.chatId,
         cwd: project.localPath,
         sessionToken: chat.sessionToken,
@@ -1038,7 +1026,7 @@ export class AgentCoordinator {
         provider: args.provider,
         model: args.model,
       })
-      turn = await this.hermesManager.startTurn({
+      turn = await manager.startTurn({
         chatId: args.chatId,
         content: buildPromptText(args.content, args.attachments),
         model: args.model,
@@ -1151,6 +1139,7 @@ export class AgentCoordinator {
         forkSession: args.forkSession,
         onToolRequest: args.onToolRequest,
       })
+      this.refreshClaudeModelCatalog(started)
 
       session = {
         id: crypto.randomUUID(),
@@ -1307,6 +1296,9 @@ export class AgentCoordinator {
     }
     if (!chat.provider) {
       throw new Error("Chat must have a provider before forking")
+    }
+    if (chat.provider === "opencode") {
+      throw new Error("OpenCode chats cannot be forked yet")
     }
     if (!chat.sessionToken && !chat.pendingForkSessionToken) {
       throw new Error("Chat has no session to fork")

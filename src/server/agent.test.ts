@@ -1370,6 +1370,137 @@ describe("AgentCoordinator Hermes integration", () => {
     expect(store.chat.sessionToken).toBe("hermes-session-1")
   })
 
+  test("routes OpenCode turns through OpenCodeServerManager", async () => {
+    const events = new AsyncEventQueue<any>()
+    const opencodeSessionCalls: Array<{
+      chatId: string
+      cwd: string
+      sessionToken: string | null
+      pendingForkSessionToken?: string | null
+    }> = []
+    const opencodeTurnCalls: Array<{
+      chatId: string
+      content: string
+      model?: string
+    }> = []
+
+    const fakeCodexManager = {
+      async startSession() {
+        throw new Error("Codex should not be used for OpenCode")
+      },
+      async startTurn() {
+        throw new Error("Codex should not be used for OpenCode")
+      },
+      stopAll() {},
+    }
+    const fakeHermesManager = {
+      async startSession() {
+        throw new Error("Hermes should not be used for OpenCode")
+      },
+      async startTurn() {
+        throw new Error("Hermes should not be used for OpenCode")
+      },
+      stopSession() {},
+      stopAll() {},
+    }
+    const fakeOpenCodeManager = {
+      async startSession(args: {
+        chatId: string
+        cwd: string
+        sessionToken: string | null
+        pendingForkSessionToken?: string | null
+      }) {
+        opencodeSessionCalls.push(args)
+        return "opencode-session-1"
+      },
+      async startTurn(args: {
+        chatId: string
+        content: string
+        model?: string
+      }): Promise<HarnessTurn> {
+        opencodeTurnCalls.push(args)
+        return {
+          provider: "opencode",
+          stream: events,
+          interrupt: async () => {},
+          close: () => {},
+        }
+      },
+      stopSession() {},
+      stopAll() {},
+    }
+
+    const store = createFakeStore()
+    const coordinator = new AgentCoordinator({
+      store: store as never,
+      onStateChange: () => {},
+      codexManager: fakeCodexManager as never,
+      hermesManager: fakeHermesManager as never,
+      opencodeManager: fakeOpenCodeManager as never,
+    })
+
+    await coordinator.send({
+      type: "chat.send",
+      chatId: "chat-1",
+      provider: "opencode",
+      content: "Review this with OpenCode",
+    })
+
+    expect(store.chat.provider).toBe("opencode")
+    expect(coordinator.getActiveStatuses().get("chat-1")).toBe("starting")
+    expect(opencodeSessionCalls).toEqual([{
+      chatId: "chat-1",
+      cwd: "/tmp/project",
+      sessionToken: null,
+      pendingForkSessionToken: null,
+    }])
+    expect(opencodeTurnCalls).toEqual([{
+      chatId: "chat-1",
+      content: "Review this with OpenCode",
+      model: "opencode-configured-default",
+    }])
+
+    events.push({ type: "session_token" as const, sessionToken: "opencode-session-1" })
+    events.push({
+      type: "transcript" as const,
+      entry: timestamped({
+        kind: "system_init",
+        provider: "opencode",
+        model: "opencode-configured-default",
+        tools: [],
+        agents: [],
+        slashCommands: [],
+        mcpServers: [],
+      }),
+    })
+    events.push({
+      type: "transcript" as const,
+      entry: timestamped({
+        kind: "result",
+        subtype: "success",
+        isError: false,
+        durationMs: 0,
+        result: "",
+      }),
+    })
+
+    await waitFor(() => store.turnFinishedCount === 1)
+    expect(store.chat.sessionToken).toBe("opencode-session-1")
+  })
+
+  test("rejects OpenCode chat forks before creating a pending fork", async () => {
+    const store = createFakeStore()
+    store.chat.provider = "opencode"
+    store.chat.sessionToken = "opencode-session-1"
+
+    const coordinator = new AgentCoordinator({
+      store: store as never,
+      onStateChange: () => {},
+    })
+
+    await expect(coordinator.forkChat("chat-1")).rejects.toThrow("OpenCode chats cannot be forked yet")
+  })
+
   test("starts Hermes fork sessions with the pending fork token and clears it after start", async () => {
     const events = new AsyncEventQueue<any>()
     const hermesSessionCalls: Array<{

@@ -31,6 +31,7 @@ function canForkChat(
   drainingChatIds: Set<string>,
 ) {
   if (!chat.provider) return false
+  if (chat.provider === "opencode") return false
   if (!chat.sessionToken && !chat.pendingForkSessionToken) return false
   if (activeStatuses.has(chat.id)) return false
   if (drainingChatIds.has(chat.id)) return false
@@ -112,6 +113,7 @@ export function deriveSidebarData(
           localPath: project?.localPath ?? "",
           provider: chat.provider,
           lastMessageAt: chat.lastMessageAt,
+          archivedAt: chat.archivedAt,
           hasAutomation: false,
           canFork: canForkChat(chat, activeStatuses, drainingChatIds) || undefined,
         }
