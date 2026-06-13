@@ -19,7 +19,7 @@ type ExitAction = "ui_restart" | "exit"
 let resolveExitAction: ((action: ExitAction) => void) | null = null
 let startedServer: Awaited<ReturnType<typeof startKannaServer>> | null = null
 const deferredRestart = createDeferredRestartController({
-  isIdle: () => startedServer?.isIdle() ?? true,
+  getIdleState: () => startedServer?.getIdleState() ?? { idle: true, lastActivityAt: Date.now() },
   restart: () => resolveExitAction?.("ui_restart"),
 })
 
