@@ -111,7 +111,7 @@ function getDefaultEditorCommandTemplate(preset: EditorPreset) {
 function createDefaultProviderDefaults(): ChatProviderPreferences {
   return {
     claude: {
-      model: "claude-opus-4-7",
+      model: "claude-opus-4-8",
       modelOptions: { ...DEFAULT_CLAUDE_MODEL_OPTIONS },
       planMode: false,
     },

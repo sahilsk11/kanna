@@ -32,6 +32,15 @@ const HARD_CODED_CODEX_MODELS: ProviderModelOption[] = [
 ]
 const DEFAULT_OPENCODE_MODEL_PROVIDERS = ["opencode-go"] as const
 
+export interface ClaudeSdkModelInfo {
+  value: string
+  displayName?: string
+  description?: string
+  supportsEffort?: boolean
+  supportedEffortLevels?: readonly string[]
+  supportsAdaptiveThinking?: boolean
+}
+
 function buildServerProviders(openCodeModels?: ProviderModelOption[]): ProviderCatalogEntry[] {
   return PROVIDERS.map((provider) => {
     if (provider.id === "codex") {
@@ -53,6 +62,10 @@ function buildServerProviders(openCodeModels?: ProviderModelOption[]): ProviderC
 }
 
 export let SERVER_PROVIDERS: ProviderCatalogEntry[] = buildServerProviders()
+
+export function resetServerProvidersForTests() {
+  SERVER_PROVIDERS = buildServerProviders()
+}
 
 export function parseOpenCodeModelsOutput(output: string, providerIds?: readonly string[]): ProviderModelOption[] {
   const seen = new Set<string>()
@@ -145,6 +158,58 @@ export async function refreshServerProviderCatalog(options?: {
     SERVER_PROVIDERS = buildServerProviders()
   }
   return SERVER_PROVIDERS
+}
+
+function modelFamily(value: string) {
+  const match = value.match(/^(?:claude-)?([a-z]+)(?:-|$)/i)
+  return match?.[1]?.toLowerCase() ?? value.toLowerCase()
+}
+
+function sdkModelMatchScore(model: ClaudeSdkModelInfo, option: ProviderModelOption) {
+  const modelValue = model.value.toLowerCase()
+  if (modelValue === option.id.toLowerCase()) return 3
+  if (option.aliases?.some((alias) => alias.toLowerCase() === modelValue)) return 2
+  const optionKeys = [option.id, ...(option.aliases ?? [])].map(modelFamily)
+  return optionKeys.includes(modelFamily(model.value)) ? 1 : 0
+}
+
+function findSdkModelForOption(models: readonly ClaudeSdkModelInfo[], option: ProviderModelOption) {
+  let bestModel: ClaudeSdkModelInfo | undefined
+  let bestScore = 0
+  for (const model of models) {
+    const score = sdkModelMatchScore(model, option)
+    if (score > bestScore) {
+      bestModel = model
+      bestScore = score
+    }
+  }
+  return bestModel
+}
+
+export function applyClaudeSdkModels(models: readonly ClaudeSdkModelInfo[]) {
+  const claudeIndex = SERVER_PROVIDERS.findIndex((provider) => provider.id === "claude")
+  const claudeProvider = SERVER_PROVIDERS[claudeIndex]
+  if (!claudeProvider) return false
+
+  const nextModels = claudeProvider.models.map((option) => {
+    const sdkModel = findSdkModelForOption(models, option)
+    if (!sdkModel) return option
+    return {
+      ...option,
+      label: sdkModel.displayName?.trim() || option.label,
+      supportsEffort: sdkModel.supportsEffort ?? option.supportsEffort,
+    }
+  })
+
+  if (JSON.stringify(nextModels) === JSON.stringify(claudeProvider.models)) {
+    return false
+  }
+
+  SERVER_PROVIDERS.splice(claudeIndex, 1, {
+    ...claudeProvider,
+    models: nextModels,
+  })
+  return true
 }
 
 export function getServerProviderCatalog(provider: AgentProvider): ProviderCatalogEntry {
