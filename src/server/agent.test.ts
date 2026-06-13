@@ -1248,128 +1248,7 @@ describe("AgentCoordinator codex integration", () => {
   })
 })
 
-describe("AgentCoordinator Hermes integration", () => {
-  test("routes Hermes turns through HermesAcpManager without calling CodexAppServerManager", async () => {
-    const events = new AsyncEventQueue<any>()
-    const codexCalls: string[] = []
-    const hermesSessionCalls: Array<{
-      chatId: string
-      cwd: string
-      sessionToken: string | null
-      pendingForkSessionToken?: string | null
-    }> = []
-    const hermesTurnCalls: Array<{
-      chatId: string
-      content: string
-      model?: string
-    }> = []
-
-    const fakeCodexManager = {
-      async startSession() {
-        codexCalls.push("startSession")
-        throw new Error("Codex should not be used for Hermes")
-      },
-      async startTurn() {
-        codexCalls.push("startTurn")
-        throw new Error("Codex should not be used for Hermes")
-      },
-      stopAll() {},
-    }
-    const fakeHermesManager = {
-      async startSession(args: {
-        chatId: string
-        cwd: string
-        sessionToken: string | null
-        pendingForkSessionToken?: string | null
-      }) {
-        hermesSessionCalls.push(args)
-        return "hermes-session-1"
-      },
-      async startTurn(args: {
-        chatId: string
-        content: string
-        model?: string
-      }): Promise<HarnessTurn> {
-        hermesTurnCalls.push(args)
-        return {
-          provider: "hermes",
-          stream: events,
-          interrupt: async () => {},
-          close: () => {},
-        }
-      },
-      stopSession() {},
-      stopAll() {},
-    }
-
-    const store = createFakeStore()
-    const coordinator = new AgentCoordinator({
-      store: store as never,
-      onStateChange: () => {},
-      codexManager: fakeCodexManager as never,
-      hermesManager: fakeHermesManager as never,
-    })
-
-    await coordinator.send({
-      type: "chat.send",
-      chatId: "chat-1",
-      provider: "hermes",
-      content: "Review this",
-      attachments: [{
-        id: "file-1",
-        kind: "file",
-        displayName: "notes.txt",
-        absolutePath: "/tmp/project/notes.txt",
-        relativePath: "./notes.txt",
-        contentUrl: "/api/projects/project-1/uploads/notes.txt/content",
-        mimeType: "text/plain",
-        size: 12,
-      }],
-    })
-
-    expect(codexCalls).toEqual([])
-    expect(store.chat.provider).toBe("hermes")
-    expect(coordinator.getActiveStatuses().get("chat-1")).toBe("starting")
-    expect(hermesSessionCalls).toEqual([{
-      chatId: "chat-1",
-      cwd: "/tmp/project",
-      sessionToken: null,
-      pendingForkSessionToken: null,
-    }])
-    expect(hermesTurnCalls).toHaveLength(1)
-    expect(hermesTurnCalls[0]?.chatId).toBe("chat-1")
-    expect(hermesTurnCalls[0]?.model).toBe("hermes-configured-default")
-    expect(hermesTurnCalls[0]?.content).toContain("Review this")
-    expect(hermesTurnCalls[0]?.content).toContain("<kanna-attachments>")
-
-    events.push({ type: "session_token" as const, sessionToken: "hermes-session-1" })
-    events.push({
-      type: "transcript" as const,
-      entry: timestamped({
-        kind: "system_init",
-        provider: "hermes",
-        model: "hermes-configured-default",
-        tools: [],
-        agents: [],
-        slashCommands: [],
-        mcpServers: [],
-      }),
-    })
-    events.push({
-      type: "transcript" as const,
-      entry: timestamped({
-        kind: "result",
-        subtype: "success",
-        isError: false,
-        durationMs: 0,
-        result: "",
-      }),
-    })
-
-    await waitFor(() => store.turnFinishedCount === 1)
-    expect(store.chat.sessionToken).toBe("hermes-session-1")
-  })
-
+describe("AgentCoordinator OpenCode integration", () => {
   test("routes OpenCode turns through OpenCodeServerManager", async () => {
     const events = new AsyncEventQueue<any>()
     const opencodeSessionCalls: Array<{
@@ -1391,16 +1270,6 @@ describe("AgentCoordinator Hermes integration", () => {
       async startTurn() {
         throw new Error("Codex should not be used for OpenCode")
       },
-      stopAll() {},
-    }
-    const fakeHermesManager = {
-      async startSession() {
-        throw new Error("Hermes should not be used for OpenCode")
-      },
-      async startTurn() {
-        throw new Error("Hermes should not be used for OpenCode")
-      },
-      stopSession() {},
       stopAll() {},
     }
     const fakeOpenCodeManager = {
@@ -1435,7 +1304,6 @@ describe("AgentCoordinator Hermes integration", () => {
       store: store as never,
       onStateChange: () => {},
       codexManager: fakeCodexManager as never,
-      hermesManager: fakeHermesManager as never,
       opencodeManager: fakeOpenCodeManager as never,
     })
 
@@ -1499,123 +1367,6 @@ describe("AgentCoordinator Hermes integration", () => {
     })
 
     await expect(coordinator.forkChat("chat-1")).rejects.toThrow("OpenCode chats cannot be forked yet")
-  })
-
-  test("starts Hermes fork sessions with the pending fork token and clears it after start", async () => {
-    const events = new AsyncEventQueue<any>()
-    const hermesSessionCalls: Array<{
-      sessionToken: string | null
-      pendingForkSessionToken?: string | null
-    }> = []
-
-    const fakeCodexManager = {
-      async startSession() {
-        throw new Error("Codex should not be used for Hermes")
-      },
-      async startTurn() {
-        throw new Error("Codex should not be used for Hermes")
-      },
-      stopAll() {},
-    }
-    const fakeHermesManager = {
-      async startSession(args: {
-        sessionToken: string | null
-        pendingForkSessionToken?: string | null
-      }) {
-        hermesSessionCalls.push({
-          sessionToken: args.sessionToken,
-          pendingForkSessionToken: args.pendingForkSessionToken,
-        })
-        return "hermes-fork-1"
-      },
-      async startTurn(): Promise<HarnessTurn> {
-        async function* stream() {
-          yield { type: "session_token" as const, sessionToken: "hermes-fork-1" }
-          yield {
-            type: "transcript" as const,
-            entry: timestamped({
-              kind: "system_init",
-              provider: "hermes",
-              model: "hermes-configured-default",
-              tools: [],
-              agents: [],
-              slashCommands: [],
-              mcpServers: [],
-            }),
-          }
-          yield {
-            type: "transcript" as const,
-            entry: timestamped({
-              kind: "result",
-              subtype: "success",
-              isError: false,
-              durationMs: 0,
-              result: "",
-            }),
-          }
-        }
-        return {
-          provider: "hermes",
-          stream: stream(),
-          interrupt: async () => {},
-          close: () => {
-            events.close()
-          },
-        }
-      },
-      stopSession() {},
-      stopAll() {},
-    }
-
-    const store = createFakeStore()
-    store.chat.provider = "hermes"
-    store.chat.pendingForkSessionToken = "hermes-parent-1"
-    const coordinator = new AgentCoordinator({
-      store: store as never,
-      onStateChange: () => {},
-      codexManager: fakeCodexManager as never,
-      hermesManager: fakeHermesManager as never,
-    })
-
-    await coordinator.send({
-      type: "chat.send",
-      chatId: "chat-1",
-      provider: "hermes",
-      content: "continue branch",
-    })
-
-    await waitFor(() => store.turnFinishedCount === 1)
-
-    expect(hermesSessionCalls).toEqual([{
-      sessionToken: null,
-      pendingForkSessionToken: "hermes-parent-1",
-    }])
-    expect(store.chat.pendingForkSessionToken).toBeNull()
-    expect(store.chat.sessionToken).toBe("hermes-fork-1")
-  })
-
-  test("closeChat stops Hermes sessions", async () => {
-    const stoppedChatIds: string[] = []
-    const fakeHermesManager = {
-      async startSession() {},
-      async startTurn(): Promise<HarnessTurn> {
-        throw new Error("not used")
-      },
-      stopSession(chatId: string) {
-        stoppedChatIds.push(chatId)
-      },
-      stopAll() {},
-    }
-
-    const coordinator = new AgentCoordinator({
-      store: createFakeStore() as never,
-      onStateChange: () => {},
-      hermesManager: fakeHermesManager as never,
-    })
-
-    await coordinator.closeChat("chat-1")
-
-    expect(stoppedChatIds).toEqual(["chat-1"])
   })
 })
 

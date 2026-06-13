@@ -67,11 +67,6 @@ describe("migrateChatPreferencesState", () => {
           modelOptions: { reasoningEffort: "minimal", fastMode: true },
           planMode: false,
         },
-        hermes: {
-          model: "hermes-configured-default",
-          modelOptions: {},
-          planMode: false,
-        },
         opencode: {
           model: "opencode-configured-default",
           modelOptions: {},
@@ -181,43 +176,12 @@ describe("migrateChatPreferencesState", () => {
     })
   })
 
-  test("normalizes Hermes defaults and composer state without Codex options", () => {
+  test("normalizes unknown default provider to last_used", () => {
     const migrated = migrateChatPreferencesState({
       defaultProvider: "hermes",
-      providerDefaults: {
-        hermes: {
-          model: "gpt-5.5",
-          modelOptions: { reasoningEffort: "xhigh", fastMode: true },
-          planMode: true,
-        },
-      },
-      chatStates: {
-        chatA: {
-          provider: "hermes",
-          model: "default",
-          modelOptions: { fastMode: true },
-          planMode: false,
-        },
-      },
     })
 
-    expect(migrated.defaultProvider).toBe("hermes")
-    expect(migrated.providerDefaults.hermes).toEqual({
-      model: "hermes-configured-default",
-      modelOptions: {},
-      planMode: true,
-    })
-    expect(migrated.chatStates.chatA).toEqual({
-      provider: "hermes",
-      model: "hermes-configured-default",
-      modelOptions: {},
-      planMode: false,
-    })
-    expect(migrated.providerDefaults.codex).toEqual({
-      model: "gpt-5.5",
-      modelOptions: { reasoningEffort: "high", fastMode: false },
-      planMode: false,
-    })
+    expect(migrated.defaultProvider).toBe("last_used")
   })
 })
 
@@ -230,9 +194,9 @@ describe("chat preference store", () => {
     })
   })
 
-  test("starts with Hermes configured defaults", () => {
-    expect(INITIAL_STATE.providerDefaults.hermes).toEqual({
-      model: "hermes-configured-default",
+  test("starts with OpenCode configured defaults", () => {
+    expect(INITIAL_STATE.providerDefaults.opencode).toEqual({
+      model: "opencode-configured-default",
       modelOptions: {},
       planMode: false,
     })
@@ -358,14 +322,14 @@ describe("chat preference store", () => {
     })
   })
 
-  test("initializeComposerForChat can use Hermes as the explicit default provider", () => {
+  test("initializeComposerForChat can use OpenCode as the explicit default provider", () => {
     useChatPreferencesStore.setState({
       ...INITIAL_STATE,
-      defaultProvider: "hermes",
+      defaultProvider: "opencode",
       providerDefaults: {
         ...INITIAL_STATE.providerDefaults,
-        hermes: {
-          model: "hermes-configured-default",
+        opencode: {
+          model: "opencode-configured-default",
           modelOptions: {},
           planMode: true,
         },
@@ -375,8 +339,8 @@ describe("chat preference store", () => {
     useChatPreferencesStore.getState().initializeComposerForChat("chat-a")
 
     expect(useChatPreferencesStore.getState().getComposerState("chat-a")).toEqual({
-      provider: "hermes",
-      model: "hermes-configured-default",
+      provider: "opencode",
+      model: "opencode-configured-default",
       modelOptions: {},
       planMode: true,
     })

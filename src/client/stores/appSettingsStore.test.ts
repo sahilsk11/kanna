@@ -30,11 +30,6 @@ function settingsSnapshot(): AppSettingsSnapshot {
         modelOptions: { reasoningEffort: "high", fastMode: false },
         planMode: false,
       },
-      hermes: {
-        model: "hermes-configured-default",
-        modelOptions: {},
-        planMode: false,
-      },
       opencode: {
         model: "opencode-configured-default",
         modelOptions: {},
@@ -47,24 +42,23 @@ function settingsSnapshot(): AppSettingsSnapshot {
 }
 
 describe("mergeAppSettingsPatch", () => {
-  test("merges Hermes defaults without replacing Claude or Codex defaults", () => {
+  test("merges OpenCode defaults without replacing Claude or Codex defaults", () => {
     const merged = mergeAppSettingsPatch(settingsSnapshot(), {
-      defaultProvider: "hermes",
+      defaultProvider: "opencode",
       providerDefaults: {
-        hermes: {
+        opencode: {
           planMode: true,
         },
       },
     })
 
-    expect(merged.defaultProvider).toBe("hermes")
-    expect(merged.providerDefaults.hermes).toEqual({
-      model: "hermes-configured-default",
+    expect(merged.defaultProvider).toBe("opencode")
+    expect(merged.providerDefaults.opencode).toEqual({
+      model: "opencode-configured-default",
       modelOptions: {},
       planMode: true,
     })
     expect(merged.providerDefaults.codex).toEqual(settingsSnapshot().providerDefaults.codex)
     expect(merged.providerDefaults.claude).toEqual(settingsSnapshot().providerDefaults.claude)
-    expect(merged.providerDefaults.opencode).toEqual(settingsSnapshot().providerDefaults.opencode)
   })
 })

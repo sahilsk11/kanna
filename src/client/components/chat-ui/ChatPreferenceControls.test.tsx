@@ -48,12 +48,12 @@ describe("ChatPreferenceControls", () => {
     expect(html).toContain("Plan Mode")
   })
 
-  test("renders Hermes without provider-specific option controls", () => {
+  test("renders OpenCode without provider-specific option controls", () => {
     const html = renderToStaticMarkup(
       <ChatPreferenceControls
         availableProviders={PROVIDERS}
-        selectedProvider="hermes"
-        model="hermes-configured-default"
+        selectedProvider="opencode"
+        model="opencode-configured-default"
         modelOptions={{}}
         onProviderChange={() => {}}
         onModelChange={() => {}}
@@ -64,13 +64,10 @@ describe("ChatPreferenceControls", () => {
       />
     )
 
-    expect(html).toContain("Hermes")
+    expect(html).toContain("OpenCode")
     expect(html).toContain("Configured Default")
     expect(html).not.toContain("Fast Mode")
     expect(html).not.toContain("Plan Mode")
-    expect(html).not.toContain("Full Access")
-    expect(html).not.toContain("Max")
-    expect(html).not.toContain("1M")
   })
 
   test("renders Fable as a Claude model option", () => {

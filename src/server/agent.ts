@@ -21,7 +21,6 @@ import { AsyncQueue } from "./async-queue"
 import { CodexAppServerManager } from "./codex-app-server"
 import { type GenerateChatTitleResult, generateTitleForChatDetailed } from "./generate-title"
 import type { HarnessEvent, HarnessToolRequest, HarnessTurn } from "./harness-types"
-import { HermesAcpManager } from "./hermes-acp"
 import { OpenCodeServerManager } from "./opencode-server"
 import {
   applyClaudeSdkModels,
@@ -112,7 +111,6 @@ interface AgentCoordinatorArgs {
   onStateChange: (chatId?: string, options?: { immediate?: boolean }) => void
   analytics?: AnalyticsReporter
   codexManager?: CodexAppServerManager
-  hermesManager?: HermesAcpManager
   opencodeManager?: OpenCodeServerManager
   generateTitle?: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
   startClaudeSession?: (args: {
@@ -647,7 +645,6 @@ export class AgentCoordinator {
   private readonly onStateChange: (chatId?: string, options?: { immediate?: boolean }) => void
   private readonly analytics: AnalyticsReporter
   private readonly codexManager: CodexAppServerManager
-  private readonly hermesManager: HermesAcpManager
   private readonly opencodeManager: OpenCodeServerManager
   private readonly generateTitle: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
   private readonly startClaudeSessionFn: NonNullable<AgentCoordinatorArgs["startClaudeSession"]>
@@ -661,7 +658,6 @@ export class AgentCoordinator {
     this.onStateChange = args.onStateChange
     this.analytics = args.analytics ?? NoopAnalyticsReporter
     this.codexManager = args.codexManager ?? new CodexAppServerManager()
-    this.hermesManager = args.hermesManager ?? new HermesAcpManager()
     this.opencodeManager = args.opencodeManager ?? new OpenCodeServerManager()
     this.generateTitle = args.generateTitle ?? generateTitleForChatDetailed
     this.startClaudeSessionFn = args.startClaudeSession ?? startClaudeSession
@@ -738,7 +734,6 @@ export class AgentCoordinator {
       claudeSession.session.close()
       this.claudeSessions.delete(chatId)
     }
-    this.hermesManager.stopSession(chatId)
     this.opencodeManager.stopSession(chatId)
     this.emitStateChange(chatId)
   }
@@ -755,7 +750,6 @@ export class AgentCoordinator {
       this.claudeSessions.delete(chatId)
     }
     this.codexManager.stopAll()
-    this.hermesManager.stopAll()
     this.opencodeManager.stopAll()
     this.emitStateChange()
   }
@@ -775,15 +769,6 @@ export class AgentCoordinator {
         effort: modelOptions.reasoningEffort,
         serviceTier: undefined,
         planMode: catalog.supportsPlanMode ? Boolean(options.planMode) : false,
-      }
-    }
-
-    if (provider === "hermes") {
-      return {
-        model: normalizeServerModel(provider, options.model),
-        effort: undefined,
-        serviceTier: undefined,
-        planMode: false,
       }
     }
 
@@ -1005,14 +990,13 @@ export class AgentCoordinator {
         provider: args.provider,
         model: args.model,
       })
-    } else {
-      const manager = args.provider === "opencode" ? this.opencodeManager : this.hermesManager
+    } else if (args.provider === "opencode") {
       logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
         chatId: args.chatId,
         provider: args.provider,
         model: args.model,
       })
-      const sessionToken = await manager.startSession({
+      const sessionToken = await this.opencodeManager.startSession({
         chatId: args.chatId,
         cwd: project.localPath,
         sessionToken: chat.sessionToken,
@@ -1026,7 +1010,7 @@ export class AgentCoordinator {
         provider: args.provider,
         model: args.model,
       })
-      turn = await manager.startTurn({
+      turn = await this.opencodeManager.startTurn({
         chatId: args.chatId,
         content: buildPromptText(args.content, args.attachments),
         model: args.model,
@@ -1036,6 +1020,8 @@ export class AgentCoordinator {
         provider: args.provider,
         model: args.model,
       })
+    } else {
+      throw new Error(`Unsupported provider: ${args.provider}`)
     }
 
     const active: ActiveTurn = {

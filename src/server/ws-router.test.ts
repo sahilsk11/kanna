@@ -105,11 +105,6 @@ const DEFAULT_APP_SETTINGS_SNAPSHOT: AppSettingsSnapshot = {
       },
       planMode: false,
     },
-    hermes: {
-      model: "hermes-configured-default",
-      modelOptions: {},
-      planMode: false,
-    },
     opencode: {
       model: "opencode-configured-default",
       modelOptions: {},

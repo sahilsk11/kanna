@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import {
-  DEFAULT_HERMES_MODEL,
   DEFAULT_OPENCODE_MODEL,
   deriveClaudeModelLabel,
   normalizeClaudeModelId,
   normalizeCodexModelId,
-  normalizeHermesModelId,
   normalizeOpenCodeModelId,
   supportsClaudeMaxReasoningEffort,
 } from "./types"
@@ -27,12 +25,6 @@ describe("shared model normalization", () => {
   test("normalizes legacy Codex aliases and defaults to the latest catalog model", () => {
     expect(normalizeCodexModelId()).toBe("gpt-5.5")
     expect(normalizeCodexModelId("gpt-5-codex")).toBe("gpt-5.3-codex")
-  })
-
-  test("normalizes Hermes to its configured default placeholder", () => {
-    expect(normalizeHermesModelId()).toBe(DEFAULT_HERMES_MODEL)
-    expect(normalizeHermesModelId("default")).toBe(DEFAULT_HERMES_MODEL)
-    expect(normalizeHermesModelId("gpt-5.5")).toBe(DEFAULT_HERMES_MODEL)
   })
 
   test("normalizes OpenCode defaults while preserving model ids from discovery", () => {

@@ -46,7 +46,7 @@ That's it. Kanna opens in your browser at [`localhost:3210`](http://localhost:32
 
 ## Features
 
-- **Multi-provider support** — switch between Claude, Codex (OpenAI), Hermes, and OpenCode from the chat input, with per-provider model selection, reasoning effort controls, and Codex fast mode
+- **Multi-provider support** — switch between Claude, Codex (OpenAI), and OpenCode from the chat input, with per-provider model selection, reasoning effort controls, and Codex fast mode
 - **Project-first sidebar** — chats grouped under projects, with live status indicators (idle, running, waiting, failed)
 - **Drag-and-drop project ordering** — reorder project groups in the sidebar with persistent ordering
 - **Local project discovery** — auto-discovers projects from both Claude and Codex local history
@@ -71,7 +71,7 @@ Bun Server (HTTP + WS)
     ├── EventStore ─── JSONL persistence + snapshot compaction
     └── ReadModels ─── derived views (sidebar, chat, projects)
     ↕  stdio / HTTP+SSE
-Claude Agent SDK / Codex App Server / OpenCode Server / ACP agents (local processes)
+Claude Agent SDK / Codex App Server / OpenCode Server (local processes)
     ↕
 Local File System (~/.kanna/data/, project dirs)
 ```
