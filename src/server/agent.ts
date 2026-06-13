@@ -1,58 +1,48 @@
-import { query, type CanUseTool, type PermissionResult, type Query, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk"
-import { homedir } from "node:os"
 import type {
   AgentProvider,
   ChatAttachment,
-  ContextWindowUsageSnapshot,
   InterruptedReason,
-  ModelOptions,
   NormalizedToolCall,
   PendingToolSnapshot,
   KannaStatus,
   QueuedChatMessage,
   TranscriptEntry,
 } from "../shared/types"
-import { normalizeToolCall } from "../shared/tools"
 import type { ClientCommand } from "../shared/protocol"
 import { EventStore } from "./event-store"
 import type { AnalyticsReporter } from "./analytics"
 import { NoopAnalyticsReporter } from "./analytics"
-import { AsyncQueue } from "./async-queue"
-import { CodexAppServerManager } from "./codex-app-server"
+import type { CodexAppServerManager } from "./codex-app-server"
 import { type GenerateChatTitleResult, generateTitleForChatDetailed } from "./generate-title"
-import type { HarnessEvent, HarnessToolRequest, HarnessTurn } from "./harness-types"
-import { OpenCodeServerManager } from "./opencode-server"
-import {
-  applyClaudeSdkModels,
-  type ClaudeSdkModelInfo,
-  codexServiceTierFromModelOptions,
-  getServerProviderCatalog,
-  normalizeClaudeModelOptions,
-  normalizeCodexModelOptions,
-  normalizeServerModel,
-} from "./provider-catalog"
-import { resolveClaudeApiModelId } from "../shared/types"
+import type { HarnessToolRequest, HarnessTurn } from "./harness-types"
+import type { OpenCodeServerManager } from "./opencode-server"
 import { fallbackTitleFromMessage } from "./generate-title"
-import { assertNever, providerCanFork } from "./provider-capabilities"
+import { logClaudeSteer } from "./providers/claude-provider"
+import {
+  type ClaudeSessionHandle,
+} from "./providers/claude-session"
+import { createServerProviders } from "./providers/create-providers"
+import { logSendToStartingProfile } from "./providers/profiling"
+import type { ServerProviderRegistry } from "./providers/registry"
+import type {
+  ProviderHost,
+  SendMessageOptions,
+  SendToStartingProfile,
+} from "./providers/types"
 
-const CLAUDE_TOOLSET = [
-  "Skill",
-  "WebFetch",
-  "WebSearch",
-  "Task",
-  "TaskOutput",
-  "Bash",
-  "Glob",
-  "Grep",
-  "Read",
-  "Edit",
-  "Write",
-  "TodoWrite",
-  "KillShell",
-  "AskUserQuestion",
-  "EnterPlanMode",
-  "ExitPlanMode",
-] as const
+export {
+  buildAttachmentHintText,
+  buildPromptText,
+} from "./prompt-text"
+export {
+  maxClaudeContextWindowFromModelUsage,
+  normalizeClaudeStreamMessage,
+  normalizeClaudeUsageSnapshot,
+} from "./providers/claude-session"
+
+const STEERED_MESSAGE_PREFIX = `<system-message>
+The user would like to inform you of something while you continue to work. Acknowledge receipt immediately with a text response, then continue with the task at hand, incorporating the user's feedback if needed.
+</system-message>`
 
 interface PendingToolRequest {
   toolUseId: string
@@ -81,36 +71,11 @@ interface ActiveTurn {
   profilingStartedAt?: number
 }
 
-interface ClaudeSessionHandle {
-  provider: "claude"
-  stream: AsyncIterable<HarnessEvent>
-  getAccountInfo?: () => Promise<any>
-  interrupt: () => Promise<void>
-  close: () => void
-  sendPrompt: (content: string) => Promise<void>
-  setModel: (model: string) => Promise<void>
-  setPermissionMode: (planMode: boolean) => Promise<void>
-  supportedModels?: () => Promise<ClaudeSdkModelInfo[]>
-}
-
-interface ClaudeSessionState {
-  id: string
-  chatId: string
-  session: ClaudeSessionHandle
-  localPath: string
-  model: string
-  effort?: string
-  planMode: boolean
-  sessionToken: string | null
-  accountInfoLoaded: boolean
-  nextPromptSeq: number
-  pendingPromptSeqs: number[]
-}
-
 interface AgentCoordinatorArgs {
   store: EventStore
   onStateChange: (chatId?: string, options?: { immediate?: boolean }) => void
   analytics?: AnalyticsReporter
+  providers?: ServerProviderRegistry
   codexManager?: CodexAppServerManager
   opencodeManager?: OpenCodeServerManager
   generateTitle?: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
@@ -123,58 +88,6 @@ interface AgentCoordinatorArgs {
     forkSession: boolean
     onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
   }) => Promise<ClaudeSessionHandle>
-}
-
-interface SendToStartingProfile {
-  traceId: string
-  startedAt: number
-}
-
-function isClaudeSteerLoggingEnabled() {
-  return process.env.KANNA_LOG_CLAUDE_STEER === "1"
-}
-
-function logClaudeSteer(stage: string, details?: Record<string, unknown>) {
-  if (!isClaudeSteerLoggingEnabled()) return
-  console.log("[kanna/claude-steer]", JSON.stringify({
-    stage,
-    ...details,
-  }))
-}
-
-const STEERED_MESSAGE_PREFIX = `<system-message>
-The user would like to inform you of something while you continue to work. Acknowledge receipt immediately with a text response, then continue with the task at hand, incorporating the user's feedback if needed.
-</system-message>`
-
-interface SendMessageOptions {
-  provider?: AgentProvider
-  model?: string
-  modelOptions?: ModelOptions
-  effort?: string
-  planMode?: boolean
-}
-
-interface ProviderSettings {
-  model: string
-  effort?: string
-  serviceTier?: "fast"
-  planMode: boolean
-}
-
-interface ProviderTurnStartArgs {
-  chatId: string
-  provider: AgentProvider
-  localPath: string
-  content: string
-  attachments: ChatAttachment[]
-  model: string
-  effort?: string
-  serviceTier?: "fast"
-  planMode: boolean
-  sessionToken: string | null
-  pendingForkSessionToken: string | null
-  onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
-  profile?: SendToStartingProfile | null
 }
 
 interface CancelOptions {
@@ -194,87 +107,10 @@ function timestamped<T extends Omit<TranscriptEntry, "_id" | "createdAt">>(
   } as TranscriptEntry
 }
 
-function stringFromUnknown(value: unknown) {
-  if (typeof value === "string") return value
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
-}
-
 function buildSteeredMessageContent(content: string) {
   return content.trim().length > 0
     ? `${STEERED_MESSAGE_PREFIX}\n\n${content}`
     : STEERED_MESSAGE_PREFIX
-}
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null
-}
-
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined
-}
-
-function escapeXmlAttribute(value: string) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("\"", "&quot;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-}
-
-function isSendToStartingProfilingEnabled() {
-  return process.env.KANNA_PROFILE_SEND_TO_STARTING === "1"
-}
-
-function elapsedProfileMs(startedAt: number) {
-  return Number((performance.now() - startedAt).toFixed(1))
-}
-
-function logSendToStartingProfile(
-  profile: SendToStartingProfile | null | undefined,
-  stage: string,
-  details?: Record<string, unknown>
-) {
-  if (!profile || !isSendToStartingProfilingEnabled()) {
-    return
-  }
-
-  console.log("[kanna/send->starting][server]", JSON.stringify({
-    traceId: profile.traceId,
-    stage,
-    elapsedMs: elapsedProfileMs(profile.startedAt),
-    ...details,
-  }))
-}
-
-export function buildAttachmentHintText(attachments: ChatAttachment[]) {
-  if (attachments.length === 0) return ""
-
-  const lines = attachments.map((attachment) => (
-    `<attachment kind="${escapeXmlAttribute(attachment.kind)}" mime_type="${escapeXmlAttribute(attachment.mimeType)}" path="${escapeXmlAttribute(attachment.absolutePath)}" project_path="${escapeXmlAttribute(attachment.relativePath)}" size_bytes="${attachment.size}" display_name="${escapeXmlAttribute(attachment.displayName)}" />`
-  ))
-
-  return [
-    "<kanna-attachments>",
-    ...lines,
-    "</kanna-attachments>",
-  ].join("\n")
-}
-
-export function buildPromptText(content: string, attachments: ChatAttachment[]) {
-  const attachmentHint = buildAttachmentHintText(attachments)
-  if (!attachmentHint) {
-    return content.trim()
-  }
-
-  const trimmed = content.trim()
-  return [
-    trimmed || "Please inspect the attached files.",
-    attachmentHint,
-  ].join("\n\n").trim()
 }
 
 function discardedToolResult(
@@ -292,400 +128,75 @@ function discardedToolResult(
   }
 }
 
-export function normalizeClaudeUsageSnapshot(
-  value: unknown,
-  maxTokens?: number,
-): ContextWindowUsageSnapshot | null {
-  const usage = asRecord(value)
-  if (!usage) return null
-
-  const directInputTokens = asNumber(usage.input_tokens) ?? asNumber(usage.inputTokens) ?? 0
-  const cacheCreationInputTokens =
-    asNumber(usage.cache_creation_input_tokens) ?? asNumber(usage.cacheCreationInputTokens) ?? 0
-  const cacheReadInputTokens =
-    asNumber(usage.cache_read_input_tokens) ?? asNumber(usage.cacheReadInputTokens) ?? 0
-  const outputTokens = asNumber(usage.output_tokens) ?? asNumber(usage.outputTokens) ?? 0
-  const reasoningOutputTokens =
-    asNumber(usage.reasoning_output_tokens) ?? asNumber(usage.reasoningOutputTokens)
-  const toolUses = asNumber(usage.tool_uses) ?? asNumber(usage.toolUses)
-  const durationMs = asNumber(usage.duration_ms) ?? asNumber(usage.durationMs)
-
-  const inputTokens = directInputTokens + cacheCreationInputTokens + cacheReadInputTokens
-  const usedTokens = inputTokens + outputTokens
-  if (usedTokens <= 0) {
-    return null
-  }
-
-  return {
-    usedTokens,
-    inputTokens,
-    ...(cacheReadInputTokens > 0 ? { cachedInputTokens: cacheReadInputTokens } : {}),
-    ...(outputTokens > 0 ? { outputTokens } : {}),
-    ...(reasoningOutputTokens !== undefined ? { reasoningOutputTokens } : {}),
-    lastUsedTokens: usedTokens,
-    lastInputTokens: inputTokens,
-    ...(cacheReadInputTokens > 0 ? { lastCachedInputTokens: cacheReadInputTokens } : {}),
-    ...(outputTokens > 0 ? { lastOutputTokens: outputTokens } : {}),
-    ...(reasoningOutputTokens !== undefined ? { lastReasoningOutputTokens: reasoningOutputTokens } : {}),
-    ...(toolUses !== undefined ? { toolUses } : {}),
-    ...(durationMs !== undefined ? { durationMs } : {}),
-    ...(typeof maxTokens === "number" && maxTokens > 0 ? { maxTokens } : {}),
-    compactsAutomatically: false,
-  }
-}
-
-export function maxClaudeContextWindowFromModelUsage(modelUsage: unknown): number | undefined {
-  const record = asRecord(modelUsage)
-  if (!record) return undefined
-
-  let maxContextWindow: number | undefined
-  for (const value of Object.values(record)) {
-    const usage = asRecord(value)
-    const contextWindow = asNumber(usage?.contextWindow) ?? asNumber(usage?.context_window)
-    if (contextWindow === undefined) continue
-    maxContextWindow = Math.max(maxContextWindow ?? 0, contextWindow)
-  }
-  return maxContextWindow
-}
-
-function getClaudeAssistantMessageUsageId(message: any): string | null {
-  if (typeof message?.message?.id === "string" && message.message.id) {
-    return message.message.id
-  }
-  if (typeof message?.uuid === "string" && message.uuid) {
-    return message.uuid
-  }
-  return null
-}
-
-export function normalizeClaudeStreamMessage(message: any): TranscriptEntry[] {
-  const debugRaw = JSON.stringify(message)
-  const messageId = typeof message.uuid === "string" ? message.uuid : undefined
-
-  if (message.type === "system" && message.subtype === "init") {
-    return [
-      timestamped({
-        kind: "system_init",
-        messageId,
-        provider: "claude",
-        model: typeof message.model === "string" ? message.model : "unknown",
-        tools: Array.isArray(message.tools) ? message.tools : [],
-        agents: Array.isArray(message.agents) ? message.agents : [],
-        slashCommands: Array.isArray(message.slash_commands)
-          ? message.slash_commands.filter((entry: string) => !entry.startsWith("._"))
-          : [],
-        mcpServers: Array.isArray(message.mcp_servers) ? message.mcp_servers : [],
-        debugRaw,
-      }),
-    ]
-  }
-
-  if (message.type === "assistant" && Array.isArray(message.message?.content)) {
-    const entries: TranscriptEntry[] = []
-    for (const content of message.message.content) {
-      if (content.type === "text" && typeof content.text === "string") {
-        entries.push(timestamped({
-          kind: "assistant_text",
-          messageId,
-          text: content.text,
-          debugRaw,
-        }))
-      }
-      if (content.type === "tool_use" && typeof content.name === "string" && typeof content.id === "string") {
-        entries.push(timestamped({
-          kind: "tool_call",
-          messageId,
-          tool: normalizeToolCall({
-            toolName: content.name,
-            toolId: content.id,
-            input: (content.input ?? {}) as Record<string, unknown>,
-          }),
-          debugRaw,
-        }))
-      }
-    }
-    return entries
-  }
-
-  if (message.type === "user" && Array.isArray(message.message?.content)) {
-    const entries: TranscriptEntry[] = []
-    for (const content of message.message.content) {
-      if (content.type === "tool_result" && typeof content.tool_use_id === "string") {
-        entries.push(timestamped({
-          kind: "tool_result",
-          messageId,
-          toolId: content.tool_use_id,
-          content: content.content,
-          isError: Boolean(content.is_error),
-          debugRaw,
-        }))
-      }
-      if (message.message.role === "user" && typeof message.message.content === "string") {
-        entries.push(timestamped({
-          kind: "compact_summary",
-          messageId,
-          summary: message.message.content,
-          debugRaw,
-        }))
-      }
-    }
-    return entries
-  }
-
-  if (message.type === "result") {
-    if (message.subtype === "cancelled") {
-      return [timestamped({ kind: "interrupted", messageId, reason: "provider_reported_cancelled", debugRaw })]
-    }
-    return [
-      timestamped({
-        kind: "result",
-        messageId,
-        subtype: message.is_error ? "error" : "success",
-        isError: Boolean(message.is_error),
-        durationMs: typeof message.duration_ms === "number" ? message.duration_ms : 0,
-        result: typeof message.result === "string" ? message.result : stringFromUnknown(message.result),
-        costUsd: typeof message.total_cost_usd === "number" ? message.total_cost_usd : undefined,
-        debugRaw,
-      }),
-    ]
-  }
-
-  if (message.type === "system" && message.subtype === "status" && typeof message.status === "string") {
-    return [timestamped({ kind: "status", messageId, status: message.status, debugRaw })]
-  }
-
-  if (message.type === "system" && message.subtype === "compact_boundary") {
-    return [timestamped({ kind: "compact_boundary", messageId, debugRaw })]
-  }
-
-  if (message.type === "system" && message.subtype === "context_cleared") {
-    return [timestamped({ kind: "context_cleared", messageId, debugRaw })]
-  }
-
-  if (
-    message.type === "user" &&
-    message.message?.role === "user" &&
-    typeof message.message.content === "string" &&
-    message.message.content.startsWith("This session is being continued")
-  ) {
-    return [timestamped({ kind: "compact_summary", messageId, summary: message.message.content, debugRaw })]
-  }
-
-  return []
-}
-
-async function* createClaudeHarnessStream(q: Query): AsyncGenerator<HarnessEvent> {
-  let seenAssistantUsageIds = new Set<string>()
-  let latestUsageSnapshot: ContextWindowUsageSnapshot | null = null
-  let lastKnownContextWindow: number | undefined
-
-  for await (const sdkMessage of q as AsyncIterable<any>) {
-    const sessionToken = typeof sdkMessage.session_id === "string" ? sdkMessage.session_id : null
-    if (sessionToken) {
-      yield { type: "session_token", sessionToken }
-    }
-
-    if (sdkMessage?.type === "assistant") {
-      const usageId = getClaudeAssistantMessageUsageId(sdkMessage)
-      const usageSnapshot = normalizeClaudeUsageSnapshot(sdkMessage.usage, lastKnownContextWindow)
-      if (usageId && usageSnapshot && !seenAssistantUsageIds.has(usageId)) {
-        seenAssistantUsageIds.add(usageId)
-        latestUsageSnapshot = usageSnapshot
-        yield {
-          type: "transcript",
-          entry: timestamped({
-            kind: "context_window_updated",
-            usage: usageSnapshot,
-          }),
-        }
-      }
-    }
-
-    if (sdkMessage?.type === "result") {
-      const resultContextWindow = maxClaudeContextWindowFromModelUsage(sdkMessage.modelUsage)
-      if (resultContextWindow !== undefined) {
-        lastKnownContextWindow = resultContextWindow
-      }
-
-      const accumulatedUsage = normalizeClaudeUsageSnapshot(
-        sdkMessage.usage,
-        resultContextWindow ?? lastKnownContextWindow,
-      )
-      const finalUsage = latestUsageSnapshot
-        ? {
-            ...latestUsageSnapshot,
-            ...(typeof (resultContextWindow ?? lastKnownContextWindow) === "number"
-              ? { maxTokens: resultContextWindow ?? lastKnownContextWindow }
-              : {}),
-            ...(accumulatedUsage && accumulatedUsage.usedTokens > latestUsageSnapshot.usedTokens
-              ? { totalProcessedTokens: accumulatedUsage.usedTokens }
-              : {}),
-          }
-        : accumulatedUsage
-
-      if (finalUsage) {
-        yield {
-          type: "transcript",
-          entry: timestamped({
-            kind: "context_window_updated",
-            usage: finalUsage,
-          }),
-        }
-      }
-
-      seenAssistantUsageIds = new Set<string>()
-      latestUsageSnapshot = null
-    }
-
-    for (const entry of normalizeClaudeStreamMessage(sdkMessage)) {
-      yield { type: "transcript", entry }
-    }
-  }
-}
-
-async function startClaudeSession(args: {
-  localPath: string
-  model: string
-  effort?: string
-  planMode: boolean
-  sessionToken: string | null
-  forkSession: boolean
-  onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
-}): Promise<ClaudeSessionHandle> {
-  const canUseTool: CanUseTool = async (toolName, input, options) => {
-    if (toolName !== "AskUserQuestion" && toolName !== "ExitPlanMode") {
-      return {
-        behavior: "allow",
-        updatedInput: input,
-      }
-    }
-
-    const tool = normalizeToolCall({
-      toolName,
-      toolId: options.toolUseID,
-      input: (input ?? {}) as Record<string, unknown>,
-    })
-
-    if (tool.toolKind !== "ask_user_question" && tool.toolKind !== "exit_plan_mode") {
-      return {
-        behavior: "deny",
-        message: "Unsupported tool request",
-      }
-    }
-
-    const result = await args.onToolRequest({ tool })
-
-    if (tool.toolKind === "ask_user_question") {
-      const record = result && typeof result === "object" ? result as Record<string, unknown> : {}
-      return {
-        behavior: "allow",
-        updatedInput: {
-          ...(tool.rawInput ?? {}),
-          questions: record.questions ?? tool.input.questions,
-          answers: record.answers ?? result,
-        },
-      } satisfies PermissionResult
-    }
-
-    const record = result && typeof result === "object" ? result as Record<string, unknown> : {}
-    const confirmed = Boolean(record.confirmed)
-    if (confirmed) {
-      return {
-        behavior: "allow",
-        updatedInput: {
-          ...(tool.rawInput ?? {}),
-          ...record,
-        },
-      } satisfies PermissionResult
-    }
-
-    return {
-      behavior: "deny",
-      message: typeof record.message === "string"
-        ? `User wants to suggest edits to the plan: ${record.message}`
-        : "User wants to suggest edits to the plan before approving.",
-    } satisfies PermissionResult
-  }
-
-  const promptQueue = new AsyncQueue<SDKUserMessage>({ pushAfterClose: "throw" })
-
-  const q = query({
-    prompt: promptQueue,
-    options: {
-      cwd: args.localPath,
-      model: args.model,
-      effort: args.effort as "low" | "medium" | "high" | "max" | undefined,
-      resume: args.sessionToken ?? undefined,
-      forkSession: args.forkSession,
-      permissionMode: args.planMode ? "plan" : "acceptEdits",
-      canUseTool,
-      tools: [...CLAUDE_TOOLSET],
-      settingSources: ["user", "project", "local"],
-      pathToClaudeCodeExecutable: process.env.CLAUDE_EXECUTABLE?.replace(/^~(?=\/|$)/, homedir()) || undefined,
-      env: (() => { const { CLAUDECODE: _, ...env } = process.env; return env })(),
-    },
-  })
-
-  return {
-    provider: "claude",
-    stream: createClaudeHarnessStream(q),
-    getAccountInfo: async () => {
-      try {
-        return await q.accountInfo()
-      } catch {
-        return null
-      }
-    },
-    interrupt: async () => {
-      await q.interrupt()
-    },
-    sendPrompt: async (content: string) => {
-      promptQueue.push({
-        type: "user",
-        message: {
-          role: "user",
-          content,
-        },
-        parent_tool_use_id: null,
-        session_id: args.sessionToken ?? "",
-      })
-    },
-    setModel: async (model: string) => {
-      await q.setModel(model)
-    },
-    setPermissionMode: async (planMode: boolean) => {
-      await q.setPermissionMode(planMode ? "plan" : "acceptEdits")
-    },
-    supportedModels: async () => await q.supportedModels(),
-    close: () => {
-      promptQueue.close()
-      q.close()
-    },
-  }
-}
-
 export class AgentCoordinator {
   private readonly store: EventStore
   private readonly onStateChange: (chatId?: string, options?: { immediate?: boolean }) => void
   private readonly analytics: AnalyticsReporter
-  private readonly codexManager: CodexAppServerManager
-  private readonly opencodeManager: OpenCodeServerManager
+  private readonly providers: ServerProviderRegistry
   private readonly generateTitle: (messageContent: string, cwd: string) => Promise<GenerateChatTitleResult>
-  private readonly startClaudeSessionFn: NonNullable<AgentCoordinatorArgs["startClaudeSession"]>
   private reportBackgroundError: ((message: string) => void) | null = null
   readonly activeTurns = new Map<string, ActiveTurn>()
   readonly drainingStreams = new Map<string, { turn: HarnessTurn }>()
-  readonly claudeSessions = new Map<string, ClaudeSessionState>()
   private lastActivityAt = Date.now()
 
   constructor(args: AgentCoordinatorArgs) {
     this.store = args.store
     this.onStateChange = args.onStateChange
     this.analytics = args.analytics ?? NoopAnalyticsReporter
-    this.codexManager = args.codexManager ?? new CodexAppServerManager()
-    this.opencodeManager = args.opencodeManager ?? new OpenCodeServerManager()
     this.generateTitle = args.generateTitle ?? generateTitleForChatDetailed
-    this.startClaudeSessionFn = args.startClaudeSession ?? startClaudeSession
+    this.providers = args.providers ?? createServerProviders({
+      host: this.createProviderHost(),
+      codexManager: args.codexManager,
+      opencodeManager: args.opencodeManager,
+      startClaudeSession: args.startClaudeSession,
+    })
+  }
+
+  private createProviderHost(): ProviderHost {
+    return {
+      appendMessage: async (chatId, entry) => {
+        await this.store.appendMessage(chatId, entry)
+      },
+      setSessionToken: async (chatId, token) => {
+        await this.store.setSessionToken(chatId, token)
+      },
+      setPendingForkSessionToken: async (chatId, token) => {
+        await this.store.setPendingForkSessionToken(chatId, token)
+      },
+      getChat: (chatId) => this.store.getChat(chatId),
+      getActiveTurn: (chatId) => this.activeTurns.get(chatId),
+      updateActiveTurn: (chatId, update) => {
+        const active = this.activeTurns.get(chatId)
+        if (active) update(active)
+      },
+      removeActiveTurn: (chatId) => {
+        this.activeTurns.delete(chatId)
+      },
+      emitStateChange: (chatId, options) => {
+        this.emitStateChange(chatId, options)
+      },
+      recordTurnFailed: async (chatId, message) => {
+        await this.store.recordTurnFailed(chatId, message)
+      },
+      recordTurnCancelled: async (chatId, options) => {
+        await this.store.recordTurnCancelled(chatId, options)
+      },
+      recordTurnFinished: async (chatId) => {
+        await this.store.recordTurnFinished(chatId)
+      },
+      maybeStartNextQueuedMessage: async (chatId) => {
+        return await this.maybeStartNextQueuedMessage(chatId)
+      },
+      markActivity: () => {
+        this.markActivity()
+      },
+      reportBackgroundError: (message) => {
+        this.reportBackgroundError?.(message)
+      },
+      onClaudeModelCatalogRefresh: () => {
+        this.emitStateChange(undefined, { immediate: true })
+      },
+    }
   }
 
   setBackgroundErrorReporter(report: ((message: string) => void) | null) {
@@ -729,20 +240,6 @@ export class AgentCoordinator {
     this.onStateChange(chatId, options)
   }
 
-  private refreshClaudeModelCatalog(session: ClaudeSessionHandle) {
-    if (!session.supportedModels) return
-    void session.supportedModels()
-      .then((models) => {
-        if (applyClaudeSdkModels(models)) {
-          this.emitStateChange(undefined, { immediate: true })
-        }
-      })
-      .catch((error) => {
-        const message = error instanceof Error ? error.message : String(error)
-        this.reportBackgroundError?.(`[claude-models] failed to refresh Claude model catalog: ${message}`)
-      })
-  }
-
   getActiveTurnProfile(chatId: string): SendToStartingProfile | null {
     const active = this.activeTurns.get(chatId)
     if (!active?.clientTraceId || active.profilingStartedAt === undefined) {
@@ -766,8 +263,8 @@ export class AgentCoordinator {
 
   async closeChat(chatId: string) {
     await this.stopDraining(chatId)
-    this.stopProviderSession("claude", chatId)
-    this.stopProviderSession("opencode", chatId)
+    this.providers.require("claude").stopChat(chatId)
+    this.providers.require("opencode").stopChat(chatId)
     this.emitStateChange(chatId)
   }
 
@@ -778,87 +275,15 @@ export class AgentCoordinator {
     for (const chatId of [...this.activeTurns.keys()]) {
       await this.cancel(chatId, { reason: "server_shutdown" })
     }
-    this.stopAllProviderSessions()
+    for (const adapter of this.providers.values()) {
+      adapter.stopAll()
+    }
     this.emitStateChange()
-  }
-
-  private stopProviderSession(provider: AgentProvider, chatId: string): void {
-    switch (provider) {
-      case "claude": {
-        const claudeSession = this.claudeSessions.get(chatId)
-        if (claudeSession) {
-          claudeSession.session.close()
-          this.claudeSessions.delete(chatId)
-        }
-        break
-      }
-      case "codex":
-        break
-      case "opencode":
-        this.opencodeManager.stopSession(chatId)
-        break
-      default:
-        assertNever(provider)
-    }
-  }
-
-  private stopAllProviderSessions(): void {
-    for (const [chatId, session] of this.claudeSessions.entries()) {
-      session.session.close()
-      this.claudeSessions.delete(chatId)
-    }
-    this.codexManager.stopAll()
-    this.opencodeManager.stopAll()
   }
 
   private resolveProvider(options: SendMessageOptions, currentProvider: AgentProvider | null) {
     if (currentProvider) return currentProvider
     return options.provider ?? "claude"
-  }
-
-  private getClaudeProviderSettings(options: SendMessageOptions): ProviderSettings {
-    const catalog = getServerProviderCatalog("claude")
-    const model = normalizeServerModel("claude", options.model)
-    const modelOptions = normalizeClaudeModelOptions(model, options.modelOptions, options.effort)
-    return {
-      model: resolveClaudeApiModelId(model, modelOptions.contextWindow),
-      effort: modelOptions.reasoningEffort,
-      serviceTier: undefined,
-      planMode: catalog.supportsPlanMode ? Boolean(options.planMode) : false,
-    }
-  }
-
-  private getCodexProviderSettings(options: SendMessageOptions): ProviderSettings {
-    const catalog = getServerProviderCatalog("codex")
-    const modelOptions = normalizeCodexModelOptions(options.modelOptions, options.effort)
-    return {
-      model: normalizeServerModel("codex", options.model),
-      effort: modelOptions.reasoningEffort,
-      serviceTier: codexServiceTierFromModelOptions(modelOptions),
-      planMode: catalog.supportsPlanMode ? Boolean(options.planMode) : false,
-    }
-  }
-
-  private getOpenCodeProviderSettings(options: SendMessageOptions): ProviderSettings {
-    return {
-      model: normalizeServerModel("opencode", options.model),
-      effort: undefined,
-      serviceTier: undefined,
-      planMode: false,
-    }
-  }
-
-  private getProviderSettings(provider: AgentProvider, options: SendMessageOptions): ProviderSettings {
-    switch (provider) {
-      case "claude":
-        return this.getClaudeProviderSettings(options)
-      case "codex":
-        return this.getCodexProviderSettings(options)
-      case "opencode":
-        return this.getOpenCodeProviderSettings(options)
-      default:
-        return assertNever(provider)
-    }
   }
 
   private async enqueueMessage(chatId: string, content: string, attachments: ChatAttachment[], options?: SendMessageOptions) {
@@ -878,7 +303,8 @@ export class AgentCoordinator {
     await this.store.removeQueuedMessage(chatId, queuedMessage.id)
     const chat = this.store.requireChat(chatId)
     const provider = this.resolveProvider(queuedMessage, chat.provider)
-    const settings = this.getProviderSettings(provider, queuedMessage)
+    const adapter = this.providers.require(provider)
+    const settings = adapter.resolveSettings(queuedMessage)
     await this.startTurnForChat({
       chatId,
       provider,
@@ -1004,10 +430,10 @@ export class AgentCoordinator {
       })
     }
 
-    let turn: HarnessTurn
-    const providerTurnArgs: ProviderTurnStartArgs = {
+    const adapter = this.providers.require(args.provider)
+
+    const { turn, activate } = await adapter.startTurn({
       chatId: args.chatId,
-      provider: args.provider,
       localPath: project.localPath,
       content: args.content,
       attachments: args.attachments,
@@ -1019,20 +445,10 @@ export class AgentCoordinator {
       pendingForkSessionToken: chat.pendingForkSessionToken ?? null,
       onToolRequest,
       profile: args.profile,
-    }
-    switch (args.provider) {
-      case "claude":
-        turn = await this.startClaudeProviderTurn(providerTurnArgs)
-        break
-      case "codex":
-        turn = await this.startCodexProviderTurn(providerTurnArgs)
-        break
-      case "opencode":
-        turn = await this.startOpenCodeProviderTurn(providerTurnArgs)
-        break
-      default:
-        turn = assertNever(args.provider)
-    }
+      clearPendingForkSessionToken: async () => {
+        await this.store.setPendingForkSessionToken(args.chatId, null)
+      },
+    })
 
     const active: ActiveTurn = {
       chatId: args.chatId,
@@ -1042,7 +458,7 @@ export class AgentCoordinator {
       effort: args.effort,
       serviceTier: args.serviceTier,
       planMode: args.planMode,
-      status: args.provider === "claude" ? "running" : "starting",
+      status: adapter.capabilities.initialActiveStatus,
       pendingTool: null,
       postToolFollowUp: null,
       hasFinalResult: false,
@@ -1067,208 +483,24 @@ export class AgentCoordinator {
       void turn.getAccountInfo()
         .then(async (accountInfo) => {
           if (!accountInfo) return
-          if (args.provider === "claude") {
-            const session = this.claudeSessions.get(args.chatId)
-            if (session) {
-              if (session.accountInfoLoaded) return
-              session.accountInfoLoaded = true
-            } else {
-              return
-            }
-          }
+          if (adapter.shouldSkipAccountInfo?.(args.chatId)) return
           await this.store.appendMessage(args.chatId, timestamped({ kind: "account_info", accountInfo }))
           this.emitStateChange(args.chatId)
         })
         .catch(() => undefined)
     }
 
-    if (args.provider === "claude") {
-      const session = this.claudeSessions.get(args.chatId)
-      if (!session) {
-        throw new Error("Claude session was not initialized")
-      }
-      const promptSeq = session.nextPromptSeq + 1
-      session.nextPromptSeq = promptSeq
-      session.pendingPromptSeqs.push(promptSeq)
-      active.claudePromptSeq = promptSeq
-      logClaudeSteer("claude_prompt_sent", {
+    if (activate) {
+      await activate({
         chatId: args.chatId,
-        sessionId: session.id,
-        promptSeq,
-        activeStatus: active.status,
-        contentPreview: args.content.slice(0, 160),
-        pendingPromptSeqs: [...session.pendingPromptSeqs],
-      })
-      await session.session.sendPrompt(buildPromptText(args.content, args.attachments))
-      logSendToStartingProfile(args.profile, "start_turn.claude_prompt_sent", {
-        chatId: args.chatId,
+        setClaudePromptSeq: (seq) => {
+          active.claudePromptSeq = seq
+        },
       })
       return
     }
 
     void this.runTurn(active)
-  }
-
-  private async startClaudeProviderTurn(args: ProviderTurnStartArgs): Promise<HarnessTurn> {
-    logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
-      chatId: args.chatId,
-      provider: args.provider,
-      model: args.model,
-    })
-    const turn = await this.startClaudeTurn({
-      chatId: args.chatId,
-      localPath: args.localPath,
-      model: args.model,
-      effort: args.effort,
-      planMode: args.planMode,
-      sessionToken: args.pendingForkSessionToken ?? args.sessionToken,
-      forkSession: Boolean(args.pendingForkSessionToken),
-      onToolRequest: args.onToolRequest,
-    })
-    logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
-      chatId: args.chatId,
-      provider: args.provider,
-      model: args.model,
-    })
-    return turn
-  }
-
-  private async startCodexProviderTurn(args: ProviderTurnStartArgs): Promise<HarnessTurn> {
-    logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
-      chatId: args.chatId,
-      provider: args.provider,
-      model: args.model,
-    })
-    const sessionToken = await this.codexManager.startSession({
-      chatId: args.chatId,
-      cwd: args.localPath,
-      model: args.model,
-      serviceTier: args.serviceTier,
-      sessionToken: args.sessionToken,
-      pendingForkSessionToken: args.pendingForkSessionToken,
-    })
-    if (args.pendingForkSessionToken && sessionToken) {
-      await this.store.setPendingForkSessionToken(args.chatId, null)
-    }
-    logSendToStartingProfile(args.profile, "start_turn.session_ready", {
-      chatId: args.chatId,
-      provider: args.provider,
-      model: args.model,
-    })
-    const turn = await this.codexManager.startTurn({
-      chatId: args.chatId,
-      content: buildPromptText(args.content, args.attachments),
-      model: args.model,
-      effort: args.effort as any,
-      serviceTier: args.serviceTier,
-      planMode: args.planMode,
-      onToolRequest: args.onToolRequest,
-    })
-    logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
-      chatId: args.chatId,
-      provider: args.provider,
-      model: args.model,
-    })
-    return turn
-  }
-
-  private async startOpenCodeProviderTurn(args: ProviderTurnStartArgs): Promise<HarnessTurn> {
-    logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
-      chatId: args.chatId,
-      provider: args.provider,
-      model: args.model,
-    })
-    const sessionToken = await this.opencodeManager.startSession({
-      chatId: args.chatId,
-      cwd: args.localPath,
-      sessionToken: args.sessionToken,
-      pendingForkSessionToken: args.pendingForkSessionToken,
-    })
-    if (args.pendingForkSessionToken && sessionToken) {
-      await this.store.setPendingForkSessionToken(args.chatId, null)
-    }
-    logSendToStartingProfile(args.profile, "start_turn.session_ready", {
-      chatId: args.chatId,
-      provider: args.provider,
-      model: args.model,
-    })
-    const turn = await this.opencodeManager.startTurn({
-      chatId: args.chatId,
-      content: buildPromptText(args.content, args.attachments),
-      model: args.model,
-    })
-    logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
-      chatId: args.chatId,
-      provider: args.provider,
-      model: args.model,
-    })
-    return turn
-  }
-
-  private async startClaudeTurn(args: {
-    chatId: string
-    localPath: string
-    model: string
-    effort?: string
-    planMode: boolean
-    sessionToken: string | null
-    forkSession: boolean
-    onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
-  }): Promise<HarnessTurn> {
-    let session = this.claudeSessions.get(args.chatId)
-
-    if (!session || session.localPath !== args.localPath || session.effort !== args.effort || args.forkSession) {
-      if (session) {
-        session.session.close()
-        this.claudeSessions.delete(args.chatId)
-      }
-
-      const started = await this.startClaudeSessionFn({
-        localPath: args.localPath,
-        model: args.model,
-        effort: args.effort,
-        planMode: args.planMode,
-        sessionToken: args.sessionToken,
-        forkSession: args.forkSession,
-        onToolRequest: args.onToolRequest,
-      })
-      this.refreshClaudeModelCatalog(started)
-
-      session = {
-        id: crypto.randomUUID(),
-        chatId: args.chatId,
-        session: started,
-        localPath: args.localPath,
-        model: args.model,
-        effort: args.effort,
-        planMode: args.planMode,
-        sessionToken: args.sessionToken,
-        accountInfoLoaded: false,
-        nextPromptSeq: 0,
-        pendingPromptSeqs: [],
-      }
-      this.claudeSessions.set(args.chatId, session)
-      void this.runClaudeSession(session)
-    } else {
-      if (session.model !== args.model) {
-        await session.session.setModel(args.model)
-        session.model = args.model
-      }
-      if (session.planMode !== args.planMode) {
-        await session.session.setPermissionMode(args.planMode)
-        session.planMode = args.planMode
-      }
-    }
-
-    return {
-      provider: "claude",
-      stream: {
-        async *[Symbol.asyncIterator]() {},
-      },
-      getAccountInfo: session.session.getAccountInfo,
-      interrupt: session.session.interrupt,
-      close: () => {},
-    }
   }
 
   async send(command: Extract<ClientCommand, { type: "chat.send" }>) {
@@ -1309,7 +541,8 @@ export class AgentCoordinator {
     }
 
     const provider = this.resolveProvider(command, chat.provider)
-    const settings = this.getProviderSettings(provider, command)
+    const adapter = this.providers.require(provider)
+    const settings = adapter.resolveSettings(command)
     this.analytics.track("message_sent")
     await this.startTurnForChat({
       chatId,
@@ -1390,11 +623,10 @@ export class AgentCoordinator {
     if (!chat.provider) {
       throw new Error("Chat must have a provider before forking")
     }
-    if (chat.provider && !providerCanFork(chat.provider)) {
+    const adapter = this.providers.require(chat.provider)
+    if (!adapter.capabilities.canFork) {
       throw new Error(
-        chat.provider === "opencode"
-          ? "OpenCode chats cannot be forked yet"
-          : `${chat.provider} chats cannot be forked yet`
+        adapter.forkNotSupportedMessage?.() ?? `${chat.provider} chats cannot be forked yet`
       )
     }
     if (!chat.sessionToken && !chat.pendingForkSessionToken) {
@@ -1406,120 +638,6 @@ export class AgentCoordinator {
     return { chatId: forked.id }
   }
 
-  private async runClaudeSession(session: ClaudeSessionState) {
-    try {
-      for await (const event of session.session.stream) {
-        if (event.type === "session_token" && event.sessionToken) {
-          session.sessionToken = event.sessionToken
-          await this.store.setSessionToken(session.chatId, event.sessionToken)
-          this.emitStateChange(session.chatId)
-          continue
-        }
-
-        if (!event.entry) continue
-        await this.store.appendMessage(session.chatId, event.entry)
-        const active = this.activeTurns.get(session.chatId)
-        if (event.entry.kind === "system_init" && active) {
-          active.status = "running"
-          const chat = this.store.getChat(session.chatId)
-          if (
-            chat?.pendingForkSessionToken
-            && session.sessionToken
-            && session.sessionToken !== chat.pendingForkSessionToken
-          ) {
-            await this.store.setPendingForkSessionToken(session.chatId, null)
-          }
-          logClaudeSteer("claude_event_system_init", {
-            chatId: session.chatId,
-            sessionId: session.id,
-            activePromptSeq: active.claudePromptSeq ?? null,
-            pendingPromptSeqs: [...session.pendingPromptSeqs],
-          })
-        }
-
-        const completedClaudePromptSeq = event.entry.kind === "result" || event.entry.kind === "interrupted"
-          ? (session.pendingPromptSeqs.shift() ?? null)
-          : null
-
-        logClaudeSteer("claude_event", {
-          chatId: session.chatId,
-          sessionId: session.id,
-          entryKind: event.entry.kind,
-          activePromptSeq: active?.claudePromptSeq ?? null,
-          completedPromptSeq: completedClaudePromptSeq,
-          activeStatus: active?.status ?? null,
-          pendingPromptSeqs: [...session.pendingPromptSeqs],
-        })
-
-        if (event.entry.kind === "result" && active && completedClaudePromptSeq === (active.claudePromptSeq ?? null)) {
-          active.hasFinalResult = true
-          if (event.entry.isError) {
-            await this.store.recordTurnFailed(session.chatId, event.entry.result || "Turn failed")
-          } else if (event.entry.subtype === "cancelled") {
-            await this.store.recordTurnCancelled(session.chatId, {
-              reason: "provider_reported_cancelled",
-              detail: event.entry.result || undefined,
-            })
-            active.cancelRecorded = true
-          } else if (!active.cancelRequested) {
-            await this.store.recordTurnFinished(session.chatId)
-          }
-          this.activeTurns.delete(session.chatId)
-          this.markActivity()
-          if (!active.cancelRequested) {
-            await this.maybeStartNextQueuedMessage(session.chatId)
-          }
-        }
-
-        if (event.entry.kind === "interrupted" && active && completedClaudePromptSeq === (active.claudePromptSeq ?? null)) {
-          active.hasFinalResult = true
-          await this.store.recordTurnCancelled(session.chatId, {
-            reason: event.entry.reason ?? "provider_reported_cancelled",
-            detail: event.entry.detail,
-          })
-          active.cancelRecorded = true
-          this.activeTurns.delete(session.chatId)
-          this.markActivity()
-          if (!active.cancelRequested) {
-            await this.maybeStartNextQueuedMessage(session.chatId)
-          }
-        }
-
-        this.emitStateChange(session.chatId)
-      }
-    } catch (error) {
-      const active = this.activeTurns.get(session.chatId)
-      if (active && !active.cancelRequested) {
-        const message = error instanceof Error ? error.message : String(error)
-        await this.store.appendMessage(
-          session.chatId,
-          timestamped({
-            kind: "result",
-            subtype: "error",
-            isError: true,
-            durationMs: 0,
-            result: message,
-          })
-        )
-        await this.store.recordTurnFailed(session.chatId, message)
-      }
-    } finally {
-      this.claudeSessions.delete(session.chatId)
-      const active = this.activeTurns.get(session.chatId)
-      if (active?.provider === "claude") {
-        if (active.cancelRequested && !active.cancelRecorded) {
-          await this.store.recordTurnCancelled(session.chatId, {
-            reason: active.cancelReason ?? "unknown",
-            detail: active.cancelDetail,
-          })
-        }
-        this.activeTurns.delete(session.chatId)
-        this.markActivity()
-      }
-      session.session.close()
-      this.emitStateChange(session.chatId)
-    }
-  }
 
   private async generateTitleInBackground(chatId: string, messageContent: string, cwd: string, expectedCurrentTitle: string) {
     try {
@@ -1720,7 +838,8 @@ export class AgentCoordinator {
           content: result,
         })
       )
-      if (active.provider === "codex" && pendingTool.tool.toolKind === "exit_plan_mode") {
+      const cancelAction = this.providers.require(active.provider).onCancelPendingTool?.(pendingTool.tool) ?? "discard"
+      if (cancelAction === "resolve") {
         pendingTool.resolve(result)
       }
     }
@@ -1797,20 +916,9 @@ export class AgentCoordinator {
         await this.store.appendMessage(command.chatId, timestamped({ kind: "context_cleared" }))
       }
 
-      if (active.provider === "codex") {
-        active.postToolFollowUp = result.confirmed
-          ? {
-              content: result.message
-                ? `Proceed with the approved plan. Additional guidance: ${result.message}`
-                : "Proceed with the approved plan.",
-              planMode: false,
-            }
-          : {
-              content: result.message
-                ? `Revise the plan using this feedback: ${result.message}`
-                : "Revise the plan using this feedback.",
-              planMode: true,
-            }
+      const followUp = this.providers.require(active.provider).onExitPlanModeResponse?.(command.result)
+      if (followUp) {
+        active.postToolFollowUp = followUp
       }
     }
 
