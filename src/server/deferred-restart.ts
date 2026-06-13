@@ -1,11 +1,17 @@
 import { LOG_PREFIX } from "../shared/branding"
 
+export interface IdleState {
+  idle: boolean
+  lastActivityAt: number
+}
+
 interface DeferredRestartControllerOptions {
-  isIdle: () => boolean
+  getIdleState: () => IdleState
   restart: () => void
   log?: (message: string) => void
   intervalMs?: number
   idleGraceMs?: number
+  now?: () => number
   setIntervalFn?: typeof setInterval
   clearIntervalFn?: typeof clearInterval
   setTimeoutFn?: typeof setTimeout
@@ -16,6 +22,7 @@ export function createDeferredRestartController(options: DeferredRestartControll
   const log = options.log ?? console.log
   const intervalMs = options.intervalMs ?? 1000
   const idleGraceMs = options.idleGraceMs ?? 2 * 60 * 1000
+  const now = options.now ?? Date.now
   const setIntervalFn = options.setIntervalFn ?? setInterval
   const clearIntervalFn = options.clearIntervalFn ?? clearInterval
   const setTimeoutFn = options.setTimeoutFn ?? setTimeout
@@ -47,14 +54,12 @@ export function createDeferredRestartController(options: DeferredRestartControll
     idleGraceTimeout = null
   }
 
-  function scheduleIdleGrace() {
+  function scheduleIdleGrace(delayMs: number) {
     if (idleGraceTimeout) return
     idleGraceTimeout = setTimeoutFn(() => {
       idleGraceTimeout = null
-      if (!restartRequested || !options.isIdle()) return
-      restartRequested = false
-      restartNow("deferred restart idle grace period elapsed")
-    }, idleGraceMs)
+      checkRestartConditions()
+    }, delayMs)
   }
 
   function checkRestartConditions() {
@@ -63,12 +68,20 @@ export function createDeferredRestartController(options: DeferredRestartControll
       return
     }
 
-    if (!options.isIdle()) {
+    const idleState = options.getIdleState()
+    if (!idleState.idle) {
       cancelIdleGrace()
       return
     }
 
-    scheduleIdleGrace()
+    const idleForMs = Math.max(0, now() - idleState.lastActivityAt)
+    if (idleForMs >= idleGraceMs) {
+      restartRequested = false
+      restartNow("deferred restart idle grace period elapsed")
+      return
+    }
+
+    scheduleIdleGrace(idleGraceMs - idleForMs)
   }
 
   function request(reason: string) {

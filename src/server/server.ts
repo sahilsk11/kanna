@@ -303,6 +303,7 @@ export async function startKannaServer(options: StartKannaServerOptions = {}) {
     diffStore,
     updateManager,
     isIdle: () => agent.isIdle(),
+    getIdleState: () => agent.getIdleState(),
     stop: shutdown,
   }
 }

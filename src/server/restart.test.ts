@@ -33,14 +33,16 @@ describe("createDeferredRestartController", () => {
   test("restarts after the idle grace period when the server is idle", () => {
     const messages: string[] = []
     let restarts = 0
+    let now = 0
     const timeoutCallback: { current: (() => void) | null } = { current: null }
     const controller = createDeferredRestartController({
-      isIdle: () => true,
+      getIdleState: () => ({ idle: true, lastActivityAt: 0 }),
       restart: () => {
         restarts++
       },
       log: (message) => messages.push(message),
       idleGraceMs: 120_000,
+      now: () => now,
       setTimeoutFn: ((callback: () => void, delay?: number) => {
         expect(delay).toBe(120_000)
         timeoutCallback.current = callback
@@ -54,6 +56,7 @@ describe("createDeferredRestartController", () => {
     expect(controller.pending).toBe(true)
     expect(messages).toContain("[kanna] reload requested, deferring restart until active sessions are idle")
 
+    now = 120_000
     timeoutCallback.current?.()
 
     expect(restarts).toBe(1)
@@ -65,16 +68,19 @@ describe("createDeferredRestartController", () => {
     const messages: string[] = []
     let restarts = 0
     let idle = false
+    let now = 0
+    let lastActivityAt = 0
     const intervalCallback: { current: (() => void) | null } = { current: null }
     const timeoutCallback: { current: (() => void) | null } = { current: null }
     let intervalCleared = false
 
     const controller = createDeferredRestartController({
-      isIdle: () => idle,
+      getIdleState: () => ({ idle, lastActivityAt }),
       restart: () => {
         restarts++
       },
       log: (message) => messages.push(message),
+      now: () => now,
       setIntervalFn: ((callback: () => void) => {
         intervalCallback.current = callback
         return 1
@@ -82,7 +88,8 @@ describe("createDeferredRestartController", () => {
       clearIntervalFn: (() => {
         intervalCleared = true
       }) as typeof clearInterval,
-      setTimeoutFn: ((callback: () => void) => {
+      setTimeoutFn: ((callback: () => void, delay?: number) => {
+        expect(delay).toBe(120_000)
         timeoutCallback.current = callback
         return 2
       }) as typeof setTimeout,
@@ -98,6 +105,8 @@ describe("createDeferredRestartController", () => {
     intervalCallback.current?.()
     expect(restarts).toBe(0)
 
+    now = 1_000
+    lastActivityAt = now
     idle = true
     intervalCallback.current?.()
 
@@ -105,6 +114,7 @@ describe("createDeferredRestartController", () => {
     expect(controller.pending).toBe(true)
     expect(timeoutCallback.current).not.toBeNull()
 
+    now = 121_000
     timeoutCallback.current?.()
 
     expect(restarts).toBe(1)
@@ -116,17 +126,20 @@ describe("createDeferredRestartController", () => {
   test("cancels the idle grace period when activity resumes", () => {
     let restarts = 0
     let idle = true
+    let now = 0
+    let lastActivityAt = 0
     const intervalCallback: { current: (() => void) | null } = { current: null }
     const timeoutCallbacks: Array<() => void> = []
     let timeoutsCleared = 0
 
     const controller = createDeferredRestartController({
-      isIdle: () => idle,
+      getIdleState: () => ({ idle, lastActivityAt }),
       restart: () => {
         restarts++
       },
       log: () => {},
       idleGraceMs: 120_000,
+      now: () => now,
       setIntervalFn: ((callback: () => void) => {
         intervalCallback.current = callback
         return 1
@@ -157,6 +170,52 @@ describe("createDeferredRestartController", () => {
     intervalCallback.current?.()
 
     expect(timeoutCallbacks).toHaveLength(2)
+    now = 120_000
+    timeoutCallbacks[1]?.()
+
+    expect(restarts).toBe(1)
+    expect(controller.pending).toBe(false)
+  })
+
+  test("extends the grace period after short activity between polling ticks", () => {
+    let restarts = 0
+    let now = 0
+    let lastActivityAt = 0
+    const timeoutDelays: number[] = []
+    const timeoutCallbacks: Array<() => void> = []
+
+    const controller = createDeferredRestartController({
+      getIdleState: () => ({ idle: true, lastActivityAt }),
+      restart: () => {
+        restarts++
+      },
+      log: () => {},
+      idleGraceMs: 120_000,
+      now: () => now,
+      setTimeoutFn: ((callback: () => void, delay?: number) => {
+        timeoutDelays.push(delay ?? 0)
+        timeoutCallbacks.push(callback)
+        return timeoutCallbacks.length
+      }) as typeof setTimeout,
+    })
+
+    controller.request("reload requested")
+
+    expect(timeoutDelays).toEqual([120_000])
+
+    now = 30_000
+    lastActivityAt = 30_000
+    now = 30_500
+    lastActivityAt = 30_500
+
+    now = 120_000
+    timeoutCallbacks[0]?.()
+
+    expect(restarts).toBe(0)
+    expect(controller.pending).toBe(true)
+    expect(timeoutDelays).toEqual([120_000, 30_500])
+
+    now = 150_500
     timeoutCallbacks[1]?.()
 
     expect(restarts).toBe(1)

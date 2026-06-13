@@ -655,6 +655,7 @@ export class AgentCoordinator {
   readonly activeTurns = new Map<string, ActiveTurn>()
   readonly drainingStreams = new Map<string, { turn: HarnessTurn }>()
   readonly claudeSessions = new Map<string, ClaudeSessionState>()
+  private lastActivityAt = Date.now()
 
   constructor(args: AgentCoordinatorArgs) {
     this.store = args.store
@@ -693,6 +694,17 @@ export class AgentCoordinator {
     return this.activeTurns.size === 0 && this.drainingStreams.size === 0
   }
 
+  getIdleState() {
+    return {
+      idle: this.isIdle(),
+      lastActivityAt: this.lastActivityAt,
+    }
+  }
+
+  private markActivity() {
+    this.lastActivityAt = Date.now()
+  }
+
   private emitStateChange(chatId?: string, options?: { immediate?: boolean }) {
     this.onStateChange(chatId, options)
   }
@@ -728,6 +740,7 @@ export class AgentCoordinator {
     if (!draining) return
     draining.turn.close()
     this.drainingStreams.delete(chatId)
+    this.markActivity()
     this.emitStateChange(chatId)
   }
 
@@ -872,6 +885,7 @@ export class AgentCoordinator {
     if (draining) {
       draining.turn.close()
       this.drainingStreams.delete(args.chatId)
+      this.markActivity()
     }
 
     const chat = this.store.requireChat(args.chatId)
@@ -1056,6 +1070,7 @@ export class AgentCoordinator {
       profilingStartedAt: args.profile?.startedAt,
     }
     this.activeTurns.set(args.chatId, active)
+    this.markActivity()
     logSendToStartingProfile(args.profile, "start_turn.active_turn_registered", {
       chatId: args.chatId,
       status: active.status,
@@ -1368,6 +1383,7 @@ export class AgentCoordinator {
             await this.store.recordTurnFinished(session.chatId)
           }
           this.activeTurns.delete(session.chatId)
+          this.markActivity()
           if (!active.cancelRequested) {
             await this.maybeStartNextQueuedMessage(session.chatId)
           }
@@ -1381,6 +1397,7 @@ export class AgentCoordinator {
           })
           active.cancelRecorded = true
           this.activeTurns.delete(session.chatId)
+          this.markActivity()
           if (!active.cancelRequested) {
             await this.maybeStartNextQueuedMessage(session.chatId)
           }
@@ -1415,6 +1432,7 @@ export class AgentCoordinator {
           })
         }
         this.activeTurns.delete(session.chatId)
+        this.markActivity()
       }
       session.session.close()
       this.emitStateChange(session.chatId)
@@ -1492,6 +1510,7 @@ export class AgentCoordinator {
           // Track the still-open stream so the UI can show a draining
           // indicator and the user can stop background tasks.
           this.drainingStreams.set(active.chatId, { turn: active.turn })
+          this.markActivity()
         }
 
         this.emitStateChange(active.chatId)
@@ -1524,9 +1543,12 @@ export class AgentCoordinator {
       // and a new turn may have started for the same chatId.
       if (this.activeTurns.get(active.chatId) === active) {
         this.activeTurns.delete(active.chatId)
+        this.markActivity()
       }
       // Stream has fully ended — no longer draining.
-      this.drainingStreams.delete(active.chatId)
+      if (this.drainingStreams.delete(active.chatId)) {
+        this.markActivity()
+      }
       this.emitStateChange(active.chatId)
 
       if (active.postToolFollowUp && !active.cancelRequested) {
@@ -1585,6 +1607,7 @@ export class AgentCoordinator {
     if (draining) {
       draining.turn.close()
       this.drainingStreams.delete(chatId)
+      this.markActivity()
     }
 
     const active = this.activeTurns.get(chatId)
@@ -1636,6 +1659,7 @@ export class AgentCoordinator {
     // Remove from activeTurns immediately so the UI reflects the cancellation
     // right away, rather than waiting for interrupt() which may hang.
     this.activeTurns.delete(chatId)
+    this.markActivity()
     this.emitStateChange(chatId)
     logClaudeSteer("cancel_active_turn_deleted", {
       chatId,
