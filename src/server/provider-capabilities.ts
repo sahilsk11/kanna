@@ -22,6 +22,7 @@ export const SERVER_PROVIDER_CAPABILITIES = {
   supportsPlanMode: boolean
 }>
 
-export function providerCanFork(provider: AgentProvider): boolean {
-  return SERVER_PROVIDER_CAPABILITIES[provider].canFork
+export function providerCanFork(provider: AgentProvider | string): boolean {
+  const capabilities = SERVER_PROVIDER_CAPABILITIES[provider as AgentProvider]
+  return capabilities?.canFork ?? false
 }
