@@ -33,6 +33,7 @@ import {
 } from "./provider-catalog"
 import { resolveClaudeApiModelId } from "../shared/types"
 import { fallbackTitleFromMessage } from "./generate-title"
+import { assertNever, providerCanFork } from "./provider-capabilities"
 
 const CLAUDE_TOOLSET = [
   "Skill",
@@ -151,6 +152,29 @@ interface SendMessageOptions {
   modelOptions?: ModelOptions
   effort?: string
   planMode?: boolean
+}
+
+interface ProviderSettings {
+  model: string
+  effort?: string
+  serviceTier?: "fast"
+  planMode: boolean
+}
+
+interface ProviderTurnStartArgs {
+  chatId: string
+  provider: AgentProvider
+  localPath: string
+  content: string
+  attachments: ChatAttachment[]
+  model: string
+  effort?: string
+  serviceTier?: "fast"
+  planMode: boolean
+  sessionToken: string | null
+  pendingForkSessionToken: string | null
+  onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
+  profile?: SendToStartingProfile | null
 }
 
 interface CancelOptions {
@@ -742,12 +766,8 @@ export class AgentCoordinator {
 
   async closeChat(chatId: string) {
     await this.stopDraining(chatId)
-    const claudeSession = this.claudeSessions.get(chatId)
-    if (claudeSession) {
-      claudeSession.session.close()
-      this.claudeSessions.delete(chatId)
-    }
-    this.opencodeManager.stopSession(chatId)
+    this.stopProviderSession("claude", chatId)
+    this.stopProviderSession("opencode", chatId)
     this.emitStateChange(chatId)
   }
 
@@ -758,13 +778,37 @@ export class AgentCoordinator {
     for (const chatId of [...this.activeTurns.keys()]) {
       await this.cancel(chatId, { reason: "server_shutdown" })
     }
+    this.stopAllProviderSessions()
+    this.emitStateChange()
+  }
+
+  private stopProviderSession(provider: AgentProvider, chatId: string): void {
+    switch (provider) {
+      case "claude": {
+        const claudeSession = this.claudeSessions.get(chatId)
+        if (claudeSession) {
+          claudeSession.session.close()
+          this.claudeSessions.delete(chatId)
+        }
+        break
+      }
+      case "codex":
+        break
+      case "opencode":
+        this.opencodeManager.stopSession(chatId)
+        break
+      default:
+        assertNever(provider)
+    }
+  }
+
+  private stopAllProviderSessions(): void {
     for (const [chatId, session] of this.claudeSessions.entries()) {
       session.session.close()
       this.claudeSessions.delete(chatId)
     }
     this.codexManager.stopAll()
     this.opencodeManager.stopAll()
-    this.emitStateChange()
   }
 
   private resolveProvider(options: SendMessageOptions, currentProvider: AgentProvider | null) {
@@ -772,34 +816,48 @@ export class AgentCoordinator {
     return options.provider ?? "claude"
   }
 
-  private getProviderSettings(provider: AgentProvider, options: SendMessageOptions) {
-    const catalog = getServerProviderCatalog(provider)
-    if (provider === "claude") {
-      const model = normalizeServerModel(provider, options.model)
-      const modelOptions = normalizeClaudeModelOptions(model, options.modelOptions, options.effort)
-      return {
-        model: resolveClaudeApiModelId(model, modelOptions.contextWindow),
-        effort: modelOptions.reasoningEffort,
-        serviceTier: undefined,
-        planMode: catalog.supportsPlanMode ? Boolean(options.planMode) : false,
-      }
+  private getClaudeProviderSettings(options: SendMessageOptions): ProviderSettings {
+    const catalog = getServerProviderCatalog("claude")
+    const model = normalizeServerModel("claude", options.model)
+    const modelOptions = normalizeClaudeModelOptions(model, options.modelOptions, options.effort)
+    return {
+      model: resolveClaudeApiModelId(model, modelOptions.contextWindow),
+      effort: modelOptions.reasoningEffort,
+      serviceTier: undefined,
+      planMode: catalog.supportsPlanMode ? Boolean(options.planMode) : false,
     }
+  }
 
-    if (provider === "opencode") {
-      return {
-        model: normalizeServerModel(provider, options.model),
-        effort: undefined,
-        serviceTier: undefined,
-        planMode: false,
-      }
-    }
-
+  private getCodexProviderSettings(options: SendMessageOptions): ProviderSettings {
+    const catalog = getServerProviderCatalog("codex")
     const modelOptions = normalizeCodexModelOptions(options.modelOptions, options.effort)
     return {
-      model: normalizeServerModel(provider, options.model),
+      model: normalizeServerModel("codex", options.model),
       effort: modelOptions.reasoningEffort,
       serviceTier: codexServiceTierFromModelOptions(modelOptions),
       planMode: catalog.supportsPlanMode ? Boolean(options.planMode) : false,
+    }
+  }
+
+  private getOpenCodeProviderSettings(options: SendMessageOptions): ProviderSettings {
+    return {
+      model: normalizeServerModel("opencode", options.model),
+      effort: undefined,
+      serviceTier: undefined,
+      planMode: false,
+    }
+  }
+
+  private getProviderSettings(provider: AgentProvider, options: SendMessageOptions): ProviderSettings {
+    switch (provider) {
+      case "claude":
+        return this.getClaudeProviderSettings(options)
+      case "codex":
+        return this.getCodexProviderSettings(options)
+      case "opencode":
+        return this.getOpenCodeProviderSettings(options)
+      default:
+        return assertNever(provider)
     }
   }
 
@@ -947,95 +1005,33 @@ export class AgentCoordinator {
     }
 
     let turn: HarnessTurn
-    if (args.provider === "claude") {
-      logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
-      turn = await this.startClaudeTurn({
-        chatId: args.chatId,
-        localPath: project.localPath,
-        model: args.model,
-        effort: args.effort,
-        planMode: args.planMode,
-        sessionToken: chat.pendingForkSessionToken ?? chat.sessionToken,
-        forkSession: Boolean(chat.pendingForkSessionToken),
-        onToolRequest,
-      })
-      logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
-    } else if (args.provider === "codex") {
-      logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
-      const sessionToken = await this.codexManager.startSession({
-        chatId: args.chatId,
-        cwd: project.localPath,
-        model: args.model,
-        serviceTier: args.serviceTier,
-        sessionToken: chat.sessionToken,
-        pendingForkSessionToken: chat.pendingForkSessionToken,
-      })
-      if (chat.pendingForkSessionToken && sessionToken) {
-        await this.store.setPendingForkSessionToken(args.chatId, null)
-      }
-      logSendToStartingProfile(args.profile, "start_turn.session_ready", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
-      turn = await this.codexManager.startTurn({
-        chatId: args.chatId,
-        content: buildPromptText(args.content, args.attachments),
-        model: args.model,
-        effort: args.effort as any,
-        serviceTier: args.serviceTier,
-        planMode: args.planMode,
-        onToolRequest,
-      })
-      logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
-    } else if (args.provider === "opencode") {
-      logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
-      const sessionToken = await this.opencodeManager.startSession({
-        chatId: args.chatId,
-        cwd: project.localPath,
-        sessionToken: chat.sessionToken,
-        pendingForkSessionToken: chat.pendingForkSessionToken,
-      })
-      if (chat.pendingForkSessionToken && sessionToken) {
-        await this.store.setPendingForkSessionToken(args.chatId, null)
-      }
-      logSendToStartingProfile(args.profile, "start_turn.session_ready", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
-      turn = await this.opencodeManager.startTurn({
-        chatId: args.chatId,
-        content: buildPromptText(args.content, args.attachments),
-        model: args.model,
-      })
-      logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
-        chatId: args.chatId,
-        provider: args.provider,
-        model: args.model,
-      })
-    } else {
-      throw new Error(`Unsupported provider: ${args.provider}`)
+    const providerTurnArgs: ProviderTurnStartArgs = {
+      chatId: args.chatId,
+      provider: args.provider,
+      localPath: project.localPath,
+      content: args.content,
+      attachments: args.attachments,
+      model: args.model,
+      effort: args.effort,
+      serviceTier: args.serviceTier,
+      planMode: args.planMode,
+      sessionToken: chat.sessionToken,
+      pendingForkSessionToken: chat.pendingForkSessionToken ?? null,
+      onToolRequest,
+      profile: args.profile,
+    }
+    switch (args.provider) {
+      case "claude":
+        turn = await this.startClaudeProviderTurn(providerTurnArgs)
+        break
+      case "codex":
+        turn = await this.startCodexProviderTurn(providerTurnArgs)
+        break
+      case "opencode":
+        turn = await this.startOpenCodeProviderTurn(providerTurnArgs)
+        break
+      default:
+        turn = assertNever(args.provider)
     }
 
     const active: ActiveTurn = {
@@ -1111,6 +1107,102 @@ export class AgentCoordinator {
     }
 
     void this.runTurn(active)
+  }
+
+  private async startClaudeProviderTurn(args: ProviderTurnStartArgs): Promise<HarnessTurn> {
+    logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
+      chatId: args.chatId,
+      provider: args.provider,
+      model: args.model,
+    })
+    const turn = await this.startClaudeTurn({
+      chatId: args.chatId,
+      localPath: args.localPath,
+      model: args.model,
+      effort: args.effort,
+      planMode: args.planMode,
+      sessionToken: args.pendingForkSessionToken ?? args.sessionToken,
+      forkSession: Boolean(args.pendingForkSessionToken),
+      onToolRequest: args.onToolRequest,
+    })
+    logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
+      chatId: args.chatId,
+      provider: args.provider,
+      model: args.model,
+    })
+    return turn
+  }
+
+  private async startCodexProviderTurn(args: ProviderTurnStartArgs): Promise<HarnessTurn> {
+    logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
+      chatId: args.chatId,
+      provider: args.provider,
+      model: args.model,
+    })
+    const sessionToken = await this.codexManager.startSession({
+      chatId: args.chatId,
+      cwd: args.localPath,
+      model: args.model,
+      serviceTier: args.serviceTier,
+      sessionToken: args.sessionToken,
+      pendingForkSessionToken: args.pendingForkSessionToken,
+    })
+    if (args.pendingForkSessionToken && sessionToken) {
+      await this.store.setPendingForkSessionToken(args.chatId, null)
+    }
+    logSendToStartingProfile(args.profile, "start_turn.session_ready", {
+      chatId: args.chatId,
+      provider: args.provider,
+      model: args.model,
+    })
+    const turn = await this.codexManager.startTurn({
+      chatId: args.chatId,
+      content: buildPromptText(args.content, args.attachments),
+      model: args.model,
+      effort: args.effort as any,
+      serviceTier: args.serviceTier,
+      planMode: args.planMode,
+      onToolRequest: args.onToolRequest,
+    })
+    logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
+      chatId: args.chatId,
+      provider: args.provider,
+      model: args.model,
+    })
+    return turn
+  }
+
+  private async startOpenCodeProviderTurn(args: ProviderTurnStartArgs): Promise<HarnessTurn> {
+    logSendToStartingProfile(args.profile, "start_turn.provider_boot.begin", {
+      chatId: args.chatId,
+      provider: args.provider,
+      model: args.model,
+    })
+    const sessionToken = await this.opencodeManager.startSession({
+      chatId: args.chatId,
+      cwd: args.localPath,
+      sessionToken: args.sessionToken,
+      pendingForkSessionToken: args.pendingForkSessionToken,
+    })
+    if (args.pendingForkSessionToken && sessionToken) {
+      await this.store.setPendingForkSessionToken(args.chatId, null)
+    }
+    logSendToStartingProfile(args.profile, "start_turn.session_ready", {
+      chatId: args.chatId,
+      provider: args.provider,
+      model: args.model,
+    })
+    const turn = await this.opencodeManager.startTurn({
+      chatId: args.chatId,
+      content: buildPromptText(args.content, args.attachments),
+      model: args.model,
+    })
+    logSendToStartingProfile(args.profile, "start_turn.provider_boot.ready", {
+      chatId: args.chatId,
+      provider: args.provider,
+      model: args.model,
+    })
+    return turn
   }
 
   private async startClaudeTurn(args: {
@@ -1298,8 +1390,12 @@ export class AgentCoordinator {
     if (!chat.provider) {
       throw new Error("Chat must have a provider before forking")
     }
-    if (chat.provider === "opencode") {
-      throw new Error("OpenCode chats cannot be forked yet")
+    if (chat.provider && !providerCanFork(chat.provider)) {
+      throw new Error(
+        chat.provider === "opencode"
+          ? "OpenCode chats cannot be forked yet"
+          : `${chat.provider} chats cannot be forked yet`
+      )
     }
     if (!chat.sessionToken && !chat.pendingForkSessionToken) {
       throw new Error("Chat has no session to fork")
