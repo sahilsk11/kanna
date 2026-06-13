@@ -250,6 +250,16 @@ export function isClaudeContextWindow(value: unknown): value is ClaudeContextWin
   return CLAUDE_CONTEXT_WINDOW_OPTIONS.some((option) => option.id === value)
 }
 
+function titleCaseWord(value: string) {
+  return value.length === 0 ? value : `${value[0]?.toUpperCase() ?? ""}${value.slice(1)}`
+}
+
+export function deriveClaudeModelLabel(modelId: string): string {
+  const parts = modelId.replace(/^claude-/, "").split("-").filter(Boolean)
+  if (parts.length === 0) return modelId
+  return titleCaseWord(parts[0] ?? modelId)
+}
+
 export interface ProviderCatalogEntry {
   id: AgentProvider
   label: string
@@ -269,8 +279,13 @@ export const PROVIDERS: ProviderCatalogEntry[] = [
     supportsPlanMode: true,
     models: [
       {
-        id: "claude-opus-4-7",
-        label: "Opus 4.7",
+        id: "fable",
+        label: deriveClaudeModelLabel("fable"),
+        supportsEffort: true,
+      },
+      {
+        id: "claude-opus-4-8",
+        label: deriveClaudeModelLabel("claude-opus-4-8"),
         supportsEffort: true,
         aliases: ["opus"],
         contextWindowOptions: [...CLAUDE_CONTEXT_WINDOW_OPTIONS],
@@ -278,14 +293,14 @@ export const PROVIDERS: ProviderCatalogEntry[] = [
       },
       {
         id: "claude-sonnet-4-6",
-        label: "Sonnet 4.6",
+        label: deriveClaudeModelLabel("claude-sonnet-4-6"),
         supportsEffort: true,
         aliases: ["sonnet"],
         contextWindowOptions: [...CLAUDE_CONTEXT_WINDOW_OPTIONS],
       },
       {
         id: "claude-haiku-4-5-20251001",
-        label: "Haiku 4.5",
+        label: deriveClaudeModelLabel("claude-haiku-4-5-20251001"),
         supportsEffort: true,
         aliases: ["haiku"],
       },
@@ -353,7 +368,7 @@ export function normalizeProviderModelId(
     ?? getProviderCatalog(provider).defaultModel
 }
 
-export function normalizeClaudeModelId(modelId?: string, fallbackModelId = "claude-opus-4-7"): string {
+export function normalizeClaudeModelId(modelId?: string, fallbackModelId = "claude-opus-4-8"): string {
   return normalizeProviderModelId("claude", modelId, fallbackModelId)
 }
 

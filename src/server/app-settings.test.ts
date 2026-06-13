@@ -37,7 +37,7 @@ function expectedSettingsSnapshot(filePath: string, overrides: Partial<AppSettin
     defaultProvider: "last_used",
     providerDefaults: {
       claude: {
-        model: "claude-opus-4-7",
+        model: "claude-opus-4-8",
         modelOptions: {
           reasoningEffort: "high",
           contextWindow: "200k",

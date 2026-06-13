@@ -45,7 +45,21 @@ function sameProviders(left: ProviderCatalogEntry[] | null | undefined, right: P
   if (left === right) return true
   if (!left || !right) return false
   if (left.length !== right.length) return false
-  return left.every((provider, index) => provider.id === right[index]?.id)
+  return left.every((provider, index) => {
+    const other = right[index]
+    return Boolean(other)
+      && provider.id === other.id
+      && provider.label === other.label
+      && provider.defaultModel === other.defaultModel
+      && provider.models.length === other.models.length
+      && provider.models.every((model, modelIndex) => {
+        const otherModel = other.models[modelIndex]
+        return Boolean(otherModel)
+          && model.id === otherModel.id
+          && model.label === otherModel.label
+          && model.supportsEffort === otherModel.supportsEffort
+      })
+  })
 }
 
 function sameHistory(left: ChatSnapshot["history"] | null | undefined, right: ChatSnapshot["history"] | null | undefined) {
