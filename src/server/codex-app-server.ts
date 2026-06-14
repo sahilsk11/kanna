@@ -188,10 +188,15 @@ function isRecoverableResumeError(error: unknown): boolean {
 }
 
 const MULTI_SELECT_HINT_PATTERN = /\b(all that apply|select all|choose all|pick all|select multiple|choose multiple|pick multiple|multiple selections?|multiple choice|more than one|one or more)\b/i
+const ASK_USER_INPUT_PROMPT_PATTERN = /\b(request_user_input|ask\s+a\s+question|ask\s+user\s+question|askuserquestion|ask\s+me\s+(?:an?other\s+)?question)\b/i
 
 function inferQuestionAllowsMultiple(question: ToolRequestUserInputQuestion): boolean {
   const combinedText = [question.header, question.question].filter(Boolean).join(" ")
   return MULTI_SELECT_HINT_PATTERN.test(combinedText)
+}
+
+function shouldEnableRequestUserInput(content: string): boolean {
+  return ASK_USER_INPUT_PROMPT_PATTERN.test(content)
 }
 
 function toAskUserQuestionItems(params: ToolRequestUserInputParams): AskUserQuestionItem[] {
@@ -822,39 +827,60 @@ export class CodexAppServerManager {
     }
     context.pendingTurn = pendingTurn
 
-    try {
-      const response = await this.sendRequest<TurnStartResponse>(context, "turn/start", {
-        threadId: context.sessionToken ?? "",
-        input: [
-          {
-            type: "text",
-            text: args.content,
-            text_elements: [],
+    let turnStartSettled = false
+    const turnStartPromise = (async () => {
+      try {
+        const response = await this.sendRequest<TurnStartResponse>(context, "turn/start", {
+          threadId: context.sessionToken ?? "",
+          input: [
+            {
+              type: "text",
+              text: args.content,
+              text_elements: [],
+            },
+          ],
+          approvalPolicy: "never",
+          model: args.model,
+          effort: args.effort,
+          serviceTier: args.serviceTier,
+          collaborationMode: {
+            mode: args.planMode || shouldEnableRequestUserInput(args.content) ? "plan" : "default",
+            settings: {
+              model: args.model,
+              reasoning_effort: null,
+              developer_instructions: null,
+            },
           },
-        ],
-        approvalPolicy: "never",
-        model: args.model,
-        effort: args.effort,
-        serviceTier: args.serviceTier,
-        collaborationMode: {
-          mode: args.planMode ? "plan" : "default",
-          settings: {
-            model: args.model,
-            reasoning_effort: null,
-            developer_instructions: null,
-          },
-        },
-      } satisfies TurnStartParams)
-      if (context.pendingTurn) {
-        context.pendingTurn.turnId = response.turn.id
-      } else {
+        } satisfies TurnStartParams)
+        turnStartSettled = true
         pendingTurn.turnId = response.turn.id
+        if (context.pendingTurn === pendingTurn) {
+          context.pendingTurn.turnId = response.turn.id
+        }
+        return response
+      } catch (error) {
+        turnStartSettled = true
+        if (context.pendingTurn === pendingTurn) {
+          context.pendingTurn = null
+        }
+        if (!pendingTurn.resolved) {
+          pendingTurn.resolved = true
+          queue.push({
+            type: "transcript",
+            entry: timestamped({
+              kind: "result",
+              subtype: "error",
+              isError: true,
+              durationMs: 0,
+              result: errorMessage(error),
+            }),
+          })
+        }
+        queue.finish()
+        throw error
       }
-    } catch (error) {
-      context.pendingTurn = null
-      queue.finish()
-      throw error
-    }
+    })()
+    void turnStartPromise.catch(() => undefined)
 
     return {
       provider: "codex",
@@ -867,11 +893,19 @@ export class CodexAppServerManager {
         pendingTurn.resolved = true
         pendingTurn.queue.finish()
 
-        if (!pendingTurn.turnId || !context.sessionToken) return
+        let turnId = pendingTurn.turnId
+        if (!turnId && !turnStartSettled) {
+          try {
+            turnId = (await turnStartPromise).turn.id
+          } catch {
+            return
+          }
+        }
+        if (!turnId || !context.sessionToken) return
 
         await this.sendRequest(context, "turn/interrupt", {
           threadId: context.sessionToken,
-          turnId: pendingTurn.turnId,
+          turnId,
         } satisfies TurnInterruptParams)
       },
       close: () => {},
