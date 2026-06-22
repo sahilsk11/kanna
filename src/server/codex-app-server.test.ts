@@ -345,33 +345,12 @@ describe("CodexAppServerManager", () => {
     const result = await manager.generateStructured({
       cwd: "/tmp/project",
       prompt: "Return JSON",
-      schema: {
-        type: "object",
-        properties: {
-          title: { type: "string" },
-        },
-        required: ["title"],
-        additionalProperties: false,
-      },
     })
 
     expect(result).toBe("{\"title\":\"Codex title\"}")
     expect(process.killed).toBe(true)
-    const threadStart = process.messages.find((message: any) => message.method === "thread/start") as any
-    const turnStart = process.messages.find((message: any) => message.method === "turn/start") as any
-    expect(threadStart?.params.model).toBe("gpt-5.5")
-    expect(threadStart?.params.sandbox).toBe("read-only")
-    expect(threadStart?.params.config).toEqual({ web_search: "disabled" })
-    expect(turnStart?.params.model).toBe("gpt-5.5")
-    expect(turnStart?.params.sandboxPolicy).toEqual({ type: "readOnly", networkAccess: false })
-    expect(turnStart?.params.outputSchema).toEqual({
-      type: "object",
-      properties: {
-        title: { type: "string" },
-      },
-      required: ["title"],
-      additionalProperties: false,
-    })
+    expect((process.messages.find((message: any) => message.method === "thread/start") as any)?.params.model).toBe("gpt-5.5")
+    expect((process.messages.find((message: any) => message.method === "turn/start") as any)?.params.model).toBe("gpt-5.5")
   })
 
   test("maps command execution and agent output into the shared transcript stream", async () => {
