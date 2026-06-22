@@ -31,7 +31,6 @@ export interface ThreadStartParams {
   serviceTier?: ServiceTier | null
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted" | null
   sandbox?: "read-only" | "workspace-write" | "danger-full-access" | null
-  config?: Record<string, unknown> | null
   experimentalRawEvents: boolean
   persistExtendedHistory: boolean
 }
@@ -43,7 +42,6 @@ export interface ThreadResumeParams {
   serviceTier?: ServiceTier | null
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted" | null
   sandbox?: "read-only" | "workspace-write" | "danger-full-access" | null
-  config?: Record<string, unknown> | null
   persistExtendedHistory: boolean
 }
 
@@ -54,7 +52,6 @@ export interface ThreadForkParams {
   serviceTier?: ServiceTier | null
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted" | null
   sandbox?: "read-only" | "workspace-write" | "danger-full-access" | null
-  config?: Record<string, unknown> | null
   ephemeral?: boolean
   persistExtendedHistory: boolean
 }
@@ -82,15 +79,10 @@ export interface TurnStartParams {
   threadId: string
   input: CodexUserInput[]
   approvalPolicy?: "never" | "on-request" | "on-failure" | "untrusted" | null
-  sandboxPolicy?: {
-    type: "readOnly"
-    networkAccess: boolean
-  } | null
   model?: string | null
   effort?: ReasoningEffort | null
   serviceTier?: ServiceTier | null
   collaborationMode?: CollaborationMode | null
-  outputSchema?: unknown
 }
 
 export interface TurnInterruptParams {
