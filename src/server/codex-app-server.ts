@@ -122,6 +122,9 @@ export interface StartCodexSessionArgs {
   serviceTier?: ServiceTier
   sessionToken: string | null
   pendingForkSessionToken?: string | null
+  approvalPolicy?: ThreadStartParams["approvalPolicy"]
+  sandbox?: ThreadStartParams["sandbox"]
+  config?: ThreadStartParams["config"]
 }
 
 export interface StartCodexTurnArgs {
@@ -133,6 +136,9 @@ export interface StartCodexTurnArgs {
   planMode: boolean
   onToolRequest: (request: HarnessToolRequest) => Promise<unknown>
   onApprovalRequest?: PendingTurn["onApprovalRequest"]
+  approvalPolicy?: TurnStartParams["approvalPolicy"]
+  sandboxPolicy?: TurnStartParams["sandboxPolicy"]
+  outputSchema?: TurnStartParams["outputSchema"]
 }
 
 export interface GenerateStructuredArgs {
@@ -141,6 +147,7 @@ export interface GenerateStructuredArgs {
   model?: string
   effort?: CodexReasoningEffort
   serviceTier?: ServiceTier
+  schema?: unknown
 }
 
 function timestamped<T extends Omit<TranscriptEntry, "_id" | "createdAt">>(
@@ -748,8 +755,9 @@ export class CodexAppServerManager {
       model: args.model,
       cwd: args.cwd,
       serviceTier: args.serviceTier,
-      approvalPolicy: "never",
-      sandbox: "danger-full-access",
+      approvalPolicy: args.approvalPolicy ?? "never",
+      sandbox: args.sandbox ?? "danger-full-access",
+      config: args.config,
       experimentalRawEvents: false,
       persistExtendedHistory: false,
     } satisfies ThreadStartParams
@@ -761,8 +769,9 @@ export class CodexAppServerManager {
         model: args.model,
         cwd: args.cwd,
         serviceTier: args.serviceTier,
-        approvalPolicy: "never",
-        sandbox: "danger-full-access",
+        approvalPolicy: args.approvalPolicy ?? "never",
+        sandbox: args.sandbox ?? "danger-full-access",
+        config: args.config,
         persistExtendedHistory: false,
       } satisfies ThreadForkParams)
     } else if (args.sessionToken) {
@@ -772,8 +781,9 @@ export class CodexAppServerManager {
           model: args.model,
           cwd: args.cwd,
           serviceTier: args.serviceTier,
-          approvalPolicy: "never",
-          sandbox: "danger-full-access",
+          approvalPolicy: args.approvalPolicy ?? "never",
+          sandbox: args.sandbox ?? "danger-full-access",
+          config: args.config,
           persistExtendedHistory: false,
         } satisfies ThreadResumeParams)
       } catch (error) {
@@ -832,7 +842,8 @@ export class CodexAppServerManager {
             text_elements: [],
           },
         ],
-        approvalPolicy: "never",
+        approvalPolicy: args.approvalPolicy ?? "never",
+        sandboxPolicy: args.sandboxPolicy,
         model: args.model,
         effort: args.effort,
         serviceTier: args.serviceTier,
@@ -844,6 +855,7 @@ export class CodexAppServerManager {
             developer_instructions: null,
           },
         },
+        outputSchema: args.outputSchema,
       } satisfies TurnStartParams)
       if (context.pendingTurn) {
         context.pendingTurn.turnId = response.turn.id
@@ -891,6 +903,11 @@ export class CodexAppServerManager {
         model: args.model ?? "gpt-5.5",
         serviceTier: args.serviceTier ?? "fast",
         sessionToken: null,
+        approvalPolicy: "never",
+        sandbox: "read-only",
+        config: {
+          web_search: "disabled",
+        },
       })
 
       turn = await this.startTurn({
@@ -901,6 +918,12 @@ export class CodexAppServerManager {
         content: args.prompt,
         planMode: false,
         onToolRequest: async () => ({}),
+        approvalPolicy: "never",
+        sandboxPolicy: {
+          type: "readOnly",
+          networkAccess: false,
+        },
+        outputSchema: args.schema,
       })
 
       for await (const event of turn.stream) {

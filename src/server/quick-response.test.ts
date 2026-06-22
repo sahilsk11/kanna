@@ -207,7 +207,7 @@ describe("QuickResponseAdapter", () => {
   })
 
   test("uses gpt-5.4-mini for Codex title generation fallback", async () => {
-    const requests: Array<{ cwd: string; prompt: string; model?: string }> = []
+    const requests: Array<{ cwd: string; prompt: string; model?: string; schema?: unknown }> = []
     const adapter = new QuickResponseAdapter({
       readLlmProvider: async () => ({
         provider: "openai",
@@ -220,7 +220,7 @@ describe("QuickResponseAdapter", () => {
         filePathDisplay: "~/.kanna/llm-provider.json",
       }),
       codexManager: {
-        async generateStructured(args: { cwd: string; prompt: string; model?: string }) {
+        async generateStructured(args: { cwd: string; prompt: string; model?: string; schema?: unknown }) {
           requests.push(args)
           return "{\"title\":\"Codex title\"}"
         },
@@ -249,6 +249,14 @@ describe("QuickResponseAdapter", () => {
     expect(result).toBe("Codex title")
     expect(requests).toHaveLength(1)
     expect(requests[0]?.model).toBe("gpt-5.4-mini")
+    expect(requests[0]?.schema).toEqual({
+      type: "object",
+      properties: {
+        title: { type: "string" },
+      },
+      required: ["title"],
+      additionalProperties: false,
+    })
   })
 
   test("falls through to Claude when the SDK is not configured", async () => {
