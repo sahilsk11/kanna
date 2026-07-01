@@ -1903,7 +1903,7 @@ export class DiffStore {
     }
 
     const syncResult = args.action === "pull"
-      ? await runGit(["pull", "--ff-only"], repo.repoRoot)
+      ? await runGit(["pull", "--rebase", "--autostash"], repo.repoRoot)
       : await runGit(["fetch", "--all", "--prune"], repo.repoRoot)
 
     if (syncResult.exitCode !== 0) {
@@ -1912,10 +1912,7 @@ export class DiffStore {
       let title = args.action === "pull" ? "Pull failed" : "Fetch failed"
       let message = summarizeGitFailure(detail, args.action === "pull" ? "Git could not pull the latest changes." : "Git could not fetch the latest changes.")
 
-      if (args.action === "pull" && normalized.includes("not possible to fast-forward")) {
-        title = "Pull requires merge or rebase"
-        message = "Your branch cannot be fast-forwarded. Rebase or merge manually, then try again."
-      } else if (normalized.includes("could not read from remote repository") || normalized.includes("authentication failed") || normalized.includes("permission denied")) {
+      if (normalized.includes("could not read from remote repository") || normalized.includes("authentication failed") || normalized.includes("permission denied")) {
         title = "Remote authentication failed"
         message = "Git could not authenticate with the remote repository."
       }

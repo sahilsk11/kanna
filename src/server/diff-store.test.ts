@@ -633,6 +633,53 @@ describe("DiffStore", () => {
     expect((await run(["git", "branch", "--show-current"], repoRoot)).trim()).toBe("feature/new")
   })
 
+  test("syncBranch pull rebases divergent local commits onto the upstream branch", async () => {
+    const repoRoot = await createRepo()
+    const remoteRoot = await createBareRemote()
+    const remoteWorktree = await mkdtemp(path.join(tmpdir(), "kanna-diff-remote-worktree-"))
+    tempDirs.push(repoRoot, remoteRoot, remoteWorktree)
+
+    await writeFile(path.join(repoRoot, "app.txt"), "base\n", "utf8")
+    await run(["git", "add", "."], repoRoot)
+    await run(["git", "commit", "-m", "base"], repoRoot)
+    await run(["git", "branch", "-M", "main"], repoRoot)
+    await run(["git", "remote", "add", "origin", remoteRoot], repoRoot)
+    await run(["git", "push", "-u", "origin", "main"], repoRoot)
+
+    await run(["git", "clone", "-b", "main", remoteRoot, remoteWorktree], tmpdir())
+    await run(["git", "config", "user.email", "kanna@example.com"], remoteWorktree)
+    await run(["git", "config", "user.name", "Kanna"], remoteWorktree)
+    await writeFile(path.join(remoteWorktree, "remote.txt"), "remote\n", "utf8")
+    await run(["git", "add", "."], remoteWorktree)
+    await run(["git", "commit", "-m", "remote change"], remoteWorktree)
+    await run(["git", "push"], remoteWorktree)
+
+    await writeFile(path.join(repoRoot, "local.txt"), "local\n", "utf8")
+    await run(["git", "add", "."], repoRoot)
+    await run(["git", "commit", "-m", "local change"], repoRoot)
+
+    const store = new DiffStore(repoRoot)
+    await store.initialize()
+    const result = await store.syncBranch({
+      projectId: "project-1",
+      projectPath: repoRoot,
+      action: "pull",
+    })
+
+    expect(result).toMatchObject({
+      ok: true,
+      action: "pull",
+      branchName: "main",
+      aheadCount: 1,
+      behindCount: 0,
+      snapshotChanged: true,
+    })
+    expect((await run(["git", "log", "--format=%s", "-2"], repoRoot)).trim().split("\n")).toEqual([
+      "local change",
+      "remote change",
+    ])
+  })
+
   test("previewMergeBranch reports up-to-date and mergeable states", async () => {
     const repoRoot = await createRepo()
     tempDirs.push(repoRoot)
